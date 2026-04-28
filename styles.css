@@ -536,23 +536,21 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 .card-extract.expanded {
   display: block;
   -webkit-line-clamp: unset;
-  -webkit-box-orient: initial;
+  line-clamp: unset;
+  -webkit-box-orient: unset;
+  box-orient: unset;
   overflow: visible;
 }
 
-.card-read-more {
-  align-self: flex-start;
-  margin-top: 6px;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--foreground);
-  opacity: 0.9;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.card-extract.expandable {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.card-read-more:hover {
-  opacity: 1;
+.card-extract.expanded {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* Card actions row — sits at bottom of the text column */

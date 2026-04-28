@@ -70,7 +70,6 @@ function createCard(article, featured = false) {
       ${featuredBadge}
       <h2 class="card-title">${escapeHtml(cleanWikipediaText(article.displayTitle))}</h2>
       <p class="card-extract">${escapeHtml(cleanWikipediaText(article.extract || ''))}</p>
-      <button class="card-read-more" type="button" aria-expanded="false" hidden>...read more</button>
       ${imageHtml}
       <div class="card-actions">
         <a class="card-read-link" href="${escapeAttr(article.url)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
@@ -87,7 +86,6 @@ function createCard(article, featured = false) {
   const likeBtn = el.querySelector('.btn-like');
   const dislikeBtn = el.querySelector('.btn-dislike');
   const extractEl = el.querySelector('.card-extract');
-  const readMoreBtn = el.querySelector('.card-read-more');
 
   likeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -99,7 +97,7 @@ function createCard(article, featured = false) {
     animateDismiss(el, article);
   });
 
-  setupExtractExpansion(el, extractEl, readMoreBtn);
+  setupExtractExpansion(el, extractEl);
 
   // Entrance animation
   const g = gsap();
@@ -110,31 +108,75 @@ function createCard(article, featured = false) {
   return el;
 }
 
-function setupExtractExpansion(cardEl, extractEl, readMoreBtn) {
-  if (!cardEl || !extractEl || !readMoreBtn) return;
+function setupExtractExpansion(cardEl, extractEl) {
+  if (!cardEl || !extractEl) return;
+  if ((extractEl.textContent || '').trim().length === 0) return;
+  extractEl.classList.add('expandable');
+  extractEl.setAttribute('role', 'button');
+  extractEl.setAttribute('tabindex', '0');
+  extractEl.setAttribute('aria-expanded', 'false');
+}
 
-  const initialize = () => {
-    if (!cardEl.isConnected) {
-      window.requestAnimationFrame(initialize);
-      return;
+const _extractFetchCache = new Map();
+
+async function toggleExtractExpansion(extractEl) {
+  if (!extractEl) return;
+  const cardEl = extractEl.closest('.card');
+  if (!cardEl) return;
+  const wasExpanded = extractEl.classList.contains('expanded');
+  if (wasExpanded) {
+    extractEl.classList.remove('expanded');
+    extractEl.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  extractEl.classList.add('expanded');
+  extractEl.setAttribute('aria-expanded', 'true');
+
+  const title = cardEl.dataset.title || '';
+  const lang = Storage.getPrefs().wikiLang || 'en';
+  if (!title) return;
+  const key = `${lang}::${title}`;
+  if (_extractFetchCache.has(key)) {
+    const cached = _extractFetchCache.get(key);
+    if (cached && cached.length > (extractEl.textContent || '').trim().length) {
+      extractEl.textContent = cached;
     }
-
-    // Measure truncation after layout; if clamped, show "...read more".
-    const isTruncated = extractEl.scrollHeight > extractEl.clientHeight + 1;
-    if (!isTruncated) {
-      readMoreBtn.hidden = true;
-      return;
+    return;
+  }
+  try {
+    const startingLen = (extractEl.textContent || '').trim().length;
+    const { fetchArticleIntro } = await import('./wiki.js');
+    const raw = await fetchArticleIntro(title, lang);
+    const full = cleanWikipediaText(raw || '');
+    _extractFetchCache.set(key, full);
+    if (full && full.length > startingLen && extractEl.classList.contains('expanded')) {
+      extractEl.textContent = full;
     }
+  } catch {}
+}
 
-    readMoreBtn.hidden = false;
-    readMoreBtn.addEventListener('click', () => {
-      const expanded = extractEl.classList.toggle('expanded');
-      readMoreBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      readMoreBtn.textContent = expanded ? 'show less' : '...read more';
-    });
-  };
-
-  window.requestAnimationFrame(initialize);
+function initExtractClickDelegation() {
+  const feed = document.getElementById('feed-cards');
+  if (!feed || feed.dataset.extractDelegationBound === '1') return;
+  feed.dataset.extractDelegationBound = '1';
+  feed.addEventListener('click', (e) => {
+    const extractEl = e.target.closest?.('.card-extract');
+    if (!extractEl || !feed.contains(extractEl)) return;
+    // ignore link clicks inside the extract
+    if (e.target.closest('a, button')) return;
+    // ignore real text selections
+    const sel = window.getSelection?.();
+    if (sel && sel.toString().length > 0) return;
+    e.preventDefault();
+    toggleExtractExpansion(extractEl);
+  });
+  feed.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const extractEl = e.target.closest?.('.card-extract.expandable');
+    if (!extractEl) return;
+    e.preventDefault();
+    toggleExtractExpansion(extractEl);
+  });
 }
 
 function animateLike(cardEl, likeBtn, article) {
@@ -792,7 +834,17 @@ function initLightbox() {
   }
 
   lbClose?.addEventListener('click', closeLightbox);
-  lb.addEventListener('click', e => { if (e.target === lb) closeLightbox(); });
+  // Close when clicking the dimmed area (not the image, toolbar, or close button)
+  lb.addEventListener('click', (e) => {
+    if (
+      e.target.closest('#lightbox-img')
+      || e.target.closest('#lightbox-close')
+      || e.target.closest('#lightbox-toolbar')
+    ) {
+      return;
+    }
+    closeLightbox();
+  });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && lb.classList.contains('open')) closeLightbox(); });
 
   // ── Drag-to-close on mobile ──────────────────────────────────────────────
@@ -1401,6 +1453,9 @@ async function init() {
 
   // Lightbox
   initLightbox();
+
+  // Click-to-expand delegation for card extracts
+  initExtractClickDelegation();
 
   // Pull-to-refresh
   initPullToRefresh();

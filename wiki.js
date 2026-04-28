@@ -251,6 +251,20 @@ export async function fetchCategoryMembers(category, limit = 20, lang = 'en') {
   return (data?.query?.categorymembers || []).map(p => p.title);
 }
 
+// Fetch a fuller plain-text intro paragraph/extract for a given title.
+export async function fetchArticleIntro(title, lang = 'en') {
+  if (!title) return '';
+  try {
+    const url = `${baseUrl(lang)}/w/api.php?action=query&prop=extracts&explaintext=1&exsectionformat=plain&exintro=1&exchars=1600&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+    const data = await fetchWithTimeout(url);
+    const pages = data?.query?.pages || {};
+    const page = Object.values(pages)[0];
+    return cleanWikipediaText(page?.extract || '');
+  } catch {
+    return '';
+  }
+}
+
 // Batch-fetch real Wikipedia categories for a list of titles in a single API call.
 // Returns a Map<title, string[]> of lowercase category names (without "Category:" prefix).
 export async function fetchCategoriesBatch(titles, lang = 'en') {
