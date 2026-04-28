@@ -94,10 +94,13 @@ export function initSettings() {
   // Reset algorithm button
   const resetBtn = document.getElementById('reset-algo-btn');
   if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
+    resetBtn.addEventListener('click', async () => {
       if (confirm('Reset your recommendation history? This cannot be undone.')) {
         Storage.reset();
         showToast('Algorithm reset — your feed starts fresh', 'info');
+        const user = await getCurrentUser();
+        if (user) scheduleSyncPrefs(user.id, 0);
+        renderLikesSection();
       }
     });
   }
@@ -105,13 +108,16 @@ export function initSettings() {
   // Clear all data button
   const clearBtn = document.getElementById('clear-all-btn');
   if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
+    clearBtn.addEventListener('click', async () => {
       if (confirm('Delete ALL local data including preferences? This cannot be undone.')) {
         Storage.resetAll();
         applyTheme('system');
         applyTextScale(100);
         showToast('All data cleared', 'info');
         renderAccountSection();
+        renderLikesSection();
+        const user = await getCurrentUser();
+        if (user) scheduleSyncPrefs(user.id, 0);
       }
     });
   }
@@ -258,9 +264,6 @@ export async function renderAccountSection() {
       renderAccountSection();
     }
   });
-
-  // Render the likes feed once the user is confirmed signed in.
-  renderLikesSection();
 }
 
 // ===== Your Likes section =====
@@ -403,7 +406,7 @@ function renderLikeCardHtml(title, article, lang) {
   `;
 }
 
-/** Wire up the toolbar (search + clear all) and unlike clicks once at init. */
+/** Wire search, clear-all, and unlike delegation (runs once — #likes-feed lives on the Account page). */
 function bindLikesEvents() {
   const search = document.getElementById('likes-search');
   if (search && !search.dataset.bound) {

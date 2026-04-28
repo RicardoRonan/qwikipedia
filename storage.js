@@ -142,6 +142,11 @@ export const Storage = {
     _write(KEYS.STATS, s);
   },
 
+  /** Replace stats in one write (e.g. cloud merge) */
+  setStatsAll(stats) {
+    _write(KEYS.STATS, { ...DEFAULT_STATS, ...stats });
+  },
+
   reset() {
     localStorage.removeItem(KEYS.ENGINE);
     localStorage.removeItem(KEYS.HISTORY);

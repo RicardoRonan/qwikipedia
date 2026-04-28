@@ -375,15 +375,6 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   margin-top: 4px;
 }
 
-#nav-user-name {
-  font-size: var(--fs-xs);
-  color: var(--muted-foreground);
-  padding: 0 10px 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .nav-btn {
   display: flex;
   align-items: center;
@@ -435,7 +426,8 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: calc(var(--radius) + 2px);
+  border-top: none;
+  border-radius: 0 0 calc(var(--radius) + 2px) calc(var(--radius) + 2px);
   overflow: hidden;
   margin: 20px 16px 0;
 }
@@ -1387,6 +1379,15 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 }
 
 /* ===== Your Likes section ===== */
+/* Inset toolbar + feed to match .settings-row padding (toolbar was edge-to-edge) */
+#likes-section .likes-toolbar {
+  padding: 14px 16px 12px;
+  margin-bottom: 0;
+}
+#likes-section .likes-feed {
+  padding: 0 16px 16px;
+}
+
 .likes-toolbar {
   display: flex;
   gap: 8px;
@@ -1425,8 +1426,9 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 }
 .like-card {
   display: flex;
-  gap: 12px;
-  padding: 12px;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1461,7 +1463,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 .like-card-title {
   font-size: var(--fs-sm);
@@ -1487,8 +1489,8 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .like-card-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 10px;
+  margin-top: 2px;
 }
 .like-card-actions a,
 .like-card-actions button {
@@ -1608,8 +1610,6 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
     display: contents;
   }
 
-  #nav-user-name { display: none; }
-
   /* Tooltip becomes a tiny caption under each icon (shadcn-style tab) */
   .nav-tooltip {
     display: block;
@@ -1677,6 +1677,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
     margin: 12px 0 0;
     border-left: none;
     border-right: none;
+    border-top: none;
     border-radius: 0;
   }
 

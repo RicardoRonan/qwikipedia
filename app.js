@@ -42,6 +42,11 @@ function showPage(id) {
     btn.classList.toggle('active', btn.dataset.page === id);
   });
 
+  const navLoginBtn = document.getElementById('nav-login-btn');
+  if (navLoginBtn) {
+    navLoginBtn.classList.toggle('active', id === 'account-page');
+  }
+
   if (id === 'account-page') {
     history.replaceState(null, '', '/account');
   } else if (location.pathname === '/account') {
@@ -57,8 +62,11 @@ function createCard(article, featured = false) {
   el.dataset.title = article.title;
   const isLiked = Storage.isLiked(article.title);
 
+  const lang = Storage.getPrefs().wikiLang || 'en';
+  const displayTitleRaw = article.displayTitle || article.title || '';
+  const safeUrl = article.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.title)}`;
   const imageHtml = article.image
-    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(article.displayTitle)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitleRaw)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
     : ``;
 
   const featuredBadge = featured
@@ -68,11 +76,11 @@ function createCard(article, featured = false) {
   el.innerHTML = `
     <div class="card-body">
       ${featuredBadge}
-      <h2 class="card-title">${escapeHtml(cleanWikipediaText(article.displayTitle))}</h2>
+      <h2 class="card-title">${escapeHtml(cleanWikipediaText(displayTitleRaw))}</h2>
       <p class="card-extract">${escapeHtml(cleanWikipediaText(article.extract || ''))}</p>
       ${imageHtml}
       <div class="card-actions">
-        <a class="card-read-link" href="${escapeAttr(article.url)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
+        <a class="card-read-link" href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
           ${ICONS.externalLink} wikipedia.org
         </a>
         <div class="card-icon-group">
@@ -273,18 +281,62 @@ function setFeedLoadingPct(value) {
   if (el) el.textContent = `${n}%`;
 }
 
+/** Build a serializable article from what's currently rendered on a card (for session restore). */
+function articlePayloadFromCardDom(card) {
+  const title = card.dataset.title;
+  if (!title) return null;
+  const titleEl = card.querySelector('.card-title');
+  const extractEl = card.querySelector('.card-extract');
+  const img = card.querySelector('.card-image-wrap img');
+  const readLink = card.querySelector('.card-read-link');
+  const displayTitle = (titleEl?.textContent || '').trim() || title;
+  const extract = (extractEl?.textContent || '').trim();
+  const image = img?.getAttribute('src') || null;
+  const url = readLink?.getAttribute('href') || null;
+  const lang = Storage.getPrefs().wikiLang || 'en';
+  return {
+    title,
+    displayTitle,
+    extract,
+    image,
+    url: url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
+    lang,
+  };
+}
+
 function snapshotFeedSession() {
   const cards = [...document.querySelectorAll('#feed-cards .card')];
   const articles = cards.map(card => {
-    const title = card.dataset.title;
-    const liked = Storage.getLikedState().likedArticles.find(a => a?.title === title);
-    return liked || { title };
-  }).filter(a => a?.title);
+    const fromDom = articlePayloadFromCardDom(card);
+    if (!fromDom) return null;
+    const liked = Storage.getLikedState().likedArticles.find(a => a?.title === fromDom.title);
+    if (liked) {
+      return {
+        ...fromDom,
+        image: liked.image || fromDom.image,
+        url: liked.url || fromDom.url,
+        extract: fromDom.extract || liked.extract || '',
+        displayTitle: fromDom.displayTitle || liked.displayTitle || fromDom.title,
+      };
+    }
+    return fromDom;
+  }).filter(Boolean);
   try {
     const payload = JSON.stringify({ ts: Date.now(), articles });
     sessionStorage.setItem(FEED_SESSION_CACHE_KEY, payload);
     localStorage.setItem(FEED_PERSISTED_CACHE_KEY, payload);
   } catch {}
+}
+
+/** Old session cache stored only `{ title }` — not enough to render a card. */
+function cacheEntryHasRenderablePayload(a) {
+  if (!a?.title) return false;
+  if (String(a.extract || '').trim().length > 0) return true;
+  if (String(a.image || '').trim().length > 0) return true;
+  if (String(a.url || '').trim().length > 0) return true;
+  const d = String(a.displayTitle || '').trim();
+  if (d && d !== String(a.title).trim()) return true;
+  return false;
 }
 
 function restoreFeedSession(container) {
@@ -294,6 +346,13 @@ function restoreFeedSession(container) {
     const parsed = JSON.parse(raw);
     if (Date.now() - parsed.ts > 1000 * 60 * 30) return false;
     if (!Array.isArray(parsed.articles) || parsed.articles.length === 0) return false;
+    if (!parsed.articles.every(cacheEntryHasRenderablePayload)) {
+      try {
+        sessionStorage.removeItem(FEED_SESSION_CACHE_KEY);
+        localStorage.removeItem(FEED_PERSISTED_CACHE_KEY);
+      } catch {}
+      return false;
+    }
     const frag = document.createDocumentFragment();
     const added = new Set();
     parsed.articles.forEach(article => {
@@ -1338,16 +1397,6 @@ async function init() {
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
       const page = btn.dataset.page;
-      if (page === 'account-page') {
-        const { getCurrentUser } = await import('./auth.js');
-        const user = await getCurrentUser();
-        if (!user) {
-          openAuthModal('signin');
-          return;
-        }
-        const { renderAccountPage } = await import('./account.js');
-        await renderAccountPage();
-      }
       showPage(page);
       if (page === 'stats-page') renderStatsPage();
     });
@@ -1383,8 +1432,6 @@ async function init() {
     const user = await getCurrentUser();
     if (user) {
       showPage('account-page');
-      document.querySelectorAll('.nav-btn[data-page]').forEach(b => b.classList.remove('active'));
-      document.querySelector('.nav-btn[data-page="account-page"]')?.classList.add('active');
       const { renderAccountPage } = await import('./account.js');
       renderAccountPage();
     } else {
@@ -1427,6 +1474,20 @@ async function init() {
 
         if (!wasSignedIn) showToast('Preferences synced from your account', 'info');
       } catch {}
+    }
+
+    // Bad or stale feed restore (e.g. old { title }-only cache): refill from API
+    const feedEl = document.getElementById('feed-cards');
+    if (feedEl && localStorage.getItem('sw_onboarded')) {
+      const cards = feedEl.querySelectorAll('.card');
+      const allGhost = cards.length > 0 && [...cards].every(c => !(c.querySelector('.card-title')?.textContent?.trim()));
+      if (allGhost) {
+        try {
+          sessionStorage.removeItem(FEED_SESSION_CACHE_KEY);
+          localStorage.removeItem(FEED_PERSISTED_CACHE_KEY);
+        } catch {}
+        loadFeed(false);
+      }
     }
 
     const { renderAccountSection, renderLikesSection } = await import('./settings.js');
@@ -1485,10 +1546,8 @@ async function init() {
 }
 
 function updateNavUser(user) {
-  const nameEl  = document.getElementById('nav-user-name');
   const loginBtn = document.getElementById('nav-login-btn');
   if (user) {
-    const initials = (user.email?.split('@')[0] || 'U').slice(0, 2).toUpperCase();
     if (loginBtn) {
       loginBtn.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:18px;height:18px">
@@ -1498,9 +1557,7 @@ function updateNavUser(user) {
         <span class="nav-tooltip">Account</span>`;
       loginBtn.setAttribute('aria-label', 'Account');
     }
-    if (nameEl) { nameEl.textContent = initials; nameEl.style.display = ''; }
   } else {
-    if (nameEl) nameEl.style.display = 'none';
     if (loginBtn) {
       loginBtn.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:18px;height:18px">

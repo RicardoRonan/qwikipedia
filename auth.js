@@ -113,22 +113,70 @@ export async function upsertProfile(userId, fields) {
   } catch {}
 }
 
+function mergeTitleLists(cloudArr, localArr, maxLen) {
+  const seen = new Set();
+  const out = [];
+  for (const t of [...(cloudArr || []), ...(localArr || [])]) {
+    if (typeof t !== 'string' || !t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= maxLen) break;
+  }
+  return out;
+}
+
+/** Prefer richer objects (more keys / longer extract) when merging by title */
+function mergeLikedArticles(cloudArr, localArr) {
+  const byTitle = new Map();
+  const score = (a) => (a?.extract?.length || 0) + (a?.image ? 100 : 0) + (a?.displayTitle?.length || 0);
+  const addList = (arr) => {
+    for (const a of arr || []) {
+      if (!a || typeof a.title !== 'string') continue;
+      const prev = byTitle.get(a.title);
+      if (!prev || score(a) > score(prev)) byTitle.set(a.title, { ...a });
+    }
+  };
+  addList(cloudArr);
+  addList(localArr);
+  return [...byTitle.values()].slice(0, 300);
+}
+
+function mergeStats(cloud, local) {
+  const c = cloud && typeof cloud === 'object' ? cloud : {};
+  const l = local || {};
+  return {
+    totalSeen: Math.max(Number(c.totalSeen) || 0, Number(l.totalSeen) || 0),
+    totalLiked: Math.max(Number(c.totalLiked) || 0, Number(l.totalLiked) || 0),
+    totalDismissed: Math.max(Number(c.totalDismissed) || 0, Number(l.totalDismissed) || 0),
+    totalTimeMs: Math.max(Number(c.totalTimeMs) || 0, Number(l.totalTimeMs) || 0),
+  };
+}
+
 /**
- * Sync local prefs (theme, text scale, language, topic interests) to Supabase.
- * Debounced via the caller — this just performs a single upsert and never throws.
+ * Sync local app state to Supabase (prefs, algorithm, likes, feed history, stats).
+ * Debounced via the caller — never throws.
+ * Requires matching columns on `profiles` (see supabase_profiles_extend.sql).
  */
 export async function syncPrefsToCloud(userId) {
   const prefs = Storage.getPrefs();
   const engine = Storage.getEngine();
   const history = Storage.getHistory();
+  const stats = Storage.getStats();
+  const onboarded = typeof localStorage !== 'undefined' && localStorage.getItem('sw_onboarded') === '1';
+
   await upsertProfile(userId, {
     theme: prefs.theme,
     text_scale: prefs.textScale,
     wiki_lang: prefs.wikiLang,
     interests: prefs.interests || [],
     topic_weights: engine.topicWeights || {},
-    // Cap at 300 to mirror the local cap and keep the row small
+    session_count: engine.sessionCount || 0,
     liked_titles: (history.likedTitles || []).slice(0, 300),
+    liked_articles: (history.likedArticles || []).slice(0, 300),
+    seen_titles: (history.seenTitles || []).slice(0, 500),
+    dismissed_titles: (history.dismissedTitles || []).slice(0, 300),
+    usage_stats: stats,
+    onboarded,
   });
 }
 
@@ -144,29 +192,50 @@ export async function pullPrefsFromCloud(userId) {
   if (profile.theme) prefUpdates.theme = profile.theme;
   if (Number.isFinite(profile.text_scale)) prefUpdates.textScale = profile.text_scale;
   if (profile.wiki_lang) prefUpdates.wikiLang = profile.wiki_lang;
-  if (Array.isArray(profile.interests)) prefUpdates.interests = profile.interests;
+  if (Array.isArray(profile.interests) && profile.interests.length > 0) {
+    prefUpdates.interests = profile.interests;
+  }
   if (Object.keys(prefUpdates).length) Storage.setPrefs(prefUpdates);
 
   // Topic weights: only overwrite when the cloud has something meaningful;
   // never wipe a user's local interests with an empty cloud row.
   if (profile.topic_weights && typeof profile.topic_weights === 'object'
       && Object.keys(profile.topic_weights).length > 0) {
-    Storage.setEngine({ topicWeights: profile.topic_weights });
+    const cur = Storage.getEngine();
+    Storage.setEngine({
+      topicWeights: profile.topic_weights,
+      sessionCount: Number.isFinite(profile.session_count)
+        ? profile.session_count
+        : (cur.sessionCount || 0),
+    });
+  } else if (Number.isFinite(profile.session_count)) {
+    Storage.setEngine({ sessionCount: profile.session_count });
   }
 
-  // Liked titles: union of local + cloud (preserves likes from either side),
-  // most-recent-first ordering taken from cloud where available.
-  if (Array.isArray(profile.liked_titles)) {
-    const local = Storage.getHistory().likedTitles || [];
-    const seen = new Set();
-    const merged = [];
-    [...profile.liked_titles, ...local].forEach(t => {
-      if (typeof t === 'string' && !seen.has(t)) {
-        seen.add(t);
-        merged.push(t);
-      }
-    });
-    Storage.setHistory({ likedTitles: merged.slice(0, 300) });
+  const h = Storage.getHistory();
+
+  const mergedArticles = mergeLikedArticles(profile.liked_articles, h.likedArticles);
+  const mergedLikedTitles = mergeTitleLists(
+    profile.liked_titles,
+    [...mergedArticles.map(a => a.title), ...(h.likedTitles || [])],
+    300,
+  );
+
+  const mergedSeen = mergeTitleLists(profile.seen_titles, h.seenTitles, 500);
+  const mergedDismissed = mergeTitleLists(profile.dismissed_titles, h.dismissedTitles, 300);
+
+  Storage.setHistory({
+    likedArticles: mergedArticles,
+    likedTitles: mergedLikedTitles,
+    seenTitles: mergedSeen,
+    dismissedTitles: mergedDismissed,
+  });
+
+  const mergedStats = mergeStats(profile.usage_stats, Storage.getStats());
+  Storage.setStatsAll(mergedStats);
+
+  if (profile.onboarded === true && typeof localStorage !== 'undefined') {
+    localStorage.setItem('sw_onboarded', '1');
   }
 
   return profile;

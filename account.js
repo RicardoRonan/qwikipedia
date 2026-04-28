@@ -1,5 +1,5 @@
 import { getCurrentUser, sendPasswordReset, updateDisplayName } from './auth.js';
-import { Storage } from './storage.js';
+import { renderLikesSection } from './settings.js';
 import { showToast } from './toast.js';
 
 export async function renderAccountPage() {
@@ -15,11 +15,11 @@ export async function renderAccountPage() {
       </div>
     `;
     host.querySelector('#account-open-auth')?.addEventListener('click', () => window.openAuthModal?.('signin'));
+    await renderLikesSection();
     return;
   }
 
   const displayName = user.user_metadata?.display_name || '';
-  const likedCount = Storage.getHistory().likedTitles?.length || 0;
   host.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-header">Profile</div>
@@ -43,15 +43,6 @@ export async function renderAccountPage() {
           <span>Send a reset link to your email</span>
         </div>
         <button class="btn-secondary" id="account-reset-password">Send reset email</button>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-header">Library</div>
-      <div class="settings-row">
-        <div class="settings-row-label">
-          <strong>Liked articles</strong>
-          <span>${likedCount} saved in this profile session</span>
-        </div>
       </div>
     </div>
   `;
@@ -78,6 +69,8 @@ export async function renderAccountPage() {
       showToast(err?.message || 'Could not send reset email', 'error');
     }
   });
+
+  await renderLikesSection();
 }
 
 function escapeHtml(s = '') {

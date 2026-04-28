@@ -50,18 +50,10 @@
         </svg>
         <span class="nav-tooltip">Settings</span>
       </button>
-      <button class="nav-btn" data-page="account-page" aria-label="Account">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-          <circle cx="12" cy="7" r="4"/>
-        </svg>
-        <span class="nav-tooltip">Account</span>
-      </button>
     </div>
 
     <!-- User / sign-in (pushed to bottom on desktop) -->
     <div id="nav-user">
-      <span id="nav-user-name" style="display:none;" aria-live="polite"></span>
       <button class="nav-btn" id="nav-login-btn" aria-label="Sign in">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -158,9 +150,31 @@
     <section id="account-page" class="page" aria-label="Account settings">
       <div class="settings-page-header">
         <h1>Account</h1>
-        <p>Manage your profile and security</p>
+        <p>Profile, security, and your liked articles</p>
       </div>
       <div id="account-page-content"></div>
+
+      <!-- Your Likes (signed-in users) -->
+      <div class="settings-section" id="likes-section" hidden>
+        <div class="settings-section-header">
+          Your likes <span class="stats-count-badge" id="likes-count">0</span>
+        </div>
+        <div class="likes-toolbar">
+          <input
+            type="search"
+            class="input-field likes-search"
+            id="likes-search"
+            placeholder="Search your likes…"
+            aria-label="Search your liked articles"
+          />
+          <button class="btn-secondary likes-clear-btn" id="likes-clear-btn" type="button">
+            Clear all
+          </button>
+        </div>
+        <div id="likes-feed" class="likes-feed" aria-live="polite">
+          <!-- Rendered by settings.js -->
+        </div>
+      </div>
     </section>
 
     <!-- ===== Stats Page ===== -->
@@ -270,35 +284,13 @@
         </div>
       </div>
 
-      <!-- Your Likes (signed-in users) -->
-      <div class="settings-section" id="likes-section" hidden>
-        <div class="settings-section-header">
-          Your likes <span class="stats-count-badge" id="likes-count">0</span>
-        </div>
-        <div class="likes-toolbar">
-          <input
-            type="search"
-            class="input-field likes-search"
-            id="likes-search"
-            placeholder="Search your likes…"
-            aria-label="Search your liked articles"
-          />
-          <button class="btn-secondary likes-clear-btn" id="likes-clear-btn" type="button">
-            Clear all
-          </button>
-        </div>
-        <div id="likes-feed" class="likes-feed" aria-live="polite">
-          <!-- Rendered by settings.js -->
-        </div>
-      </div>
-
       <!-- Data -->
       <div class="settings-section">
         <div class="settings-section-header">Your Data</div>
         <p class="settings-info-text">
-          Your recommendation history and preferences are stored only in your browser's local storage.
-          No article reading data is sent anywhere unless you are signed in, in which case only your
-          theme and text size preferences are synced.
+          Your recommendation history and preferences are stored in your browser's local storage.
+          If you sign in, that state (including likes, interests, topic weights, feed history, and stats)
+          is synced to your account in Supabase so it can be restored on other devices.
         </p>
         <div class="btn-row">
           <button class="btn-secondary" id="reset-algo-btn">Reset algorithm</button>

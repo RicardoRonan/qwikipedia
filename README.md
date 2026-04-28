@@ -86,14 +86,21 @@ On a `429 Too Many Requests` or `503 Service Unavailable`, ScrollWiki pauses new
 
 ## Cloud Sync (Supabase)
 
-When a user is signed in, the following preferences are kept in sync with their `profiles` row in Supabase:
+When a user is signed in, local state is kept in sync with their `profiles` row in Supabase (see `supabase_profiles_extend.sql` for required columns):
 
 | Field | Column | Type |
 |-------|--------|------|
 | Theme (`light` / `dark` / `system`) | `theme` | `text` |
 | Text scale (80–130) | `text_scale` | `int4` |
 | Wikipedia language code | `wiki_lang` | `text` |
+| Selected interest ids | `interests` | `jsonb` |
 | Topic interest weights | `topic_weights` | `jsonb` |
+| Engine session count | `session_count` | `int4` |
+| Liked article titles | `liked_titles` | `jsonb` |
+| Liked article cards (title, extract, image, etc.) | `liked_articles` | `jsonb` |
+| Seen / dismissed titles | `seen_titles`, `dismissed_titles` | `jsonb` |
+| Aggregate stats (seen / liked / dismissed / time) | `usage_stats` | `jsonb` |
+| Onboarding completed | `onboarded` | `boolean` |
 | Wikipedia username (optional) | `wikipedia_username` | `text` |
 
 **How it works:**
@@ -109,6 +116,6 @@ RLS policies on `profiles` ensure users can only read/upsert their own row (`aut
 ## Privacy
 
 - No tracking, no analytics, no ads
-- Article history (seen / liked / dismissed titles) **never leaves your device** — only the aggregated topic-weight vector is synced
+- Article history (seen / liked / dismissed titles, liked article previews, and usage stats) is **uploaded when you are signed in** so you can continue on another device. It is stored only in your own `profiles` row and subject to Supabase RLS.
 - All Wikipedia API calls go directly from your browser to Wikipedia's servers
 - If you're signed out, nothing is sent to Supabase
