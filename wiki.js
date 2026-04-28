@@ -101,10 +101,79 @@ function normalizeSummary(raw, lang = 'en') {
   };
 }
 
+/** Local LRU of raw REST `/page/summary` JSON — inspired by bundled-data demos; cuts repeat/article traffic. */
+const SUMMARY_DISK_KEY = 'sw_rest_summary_v1';
+const SUMMARY_DISK_MAX_ENTRIES = 140;
+const SUMMARY_DISK_TTL_MS = 8 * 24 * 60 * 60 * 1000;
+
+function diskSummaryKey(lang, title) {
+  return `${lang}\u0001${title}`;
+}
+
+function readSummaryDisk() {
+  try {
+    const raw = localStorage.getItem(SUMMARY_DISK_KEY);
+    if (!raw) return { order: [], entries: {} };
+    const o = JSON.parse(raw);
+    return { order: o.order || [], entries: o.entries || {} };
+  } catch {
+    return { order: [], entries: {} };
+  }
+}
+
+function writeSummaryDisk(bundle) {
+  try {
+    localStorage.setItem(SUMMARY_DISK_KEY, JSON.stringify(bundle));
+  } catch {
+    while (bundle.order.length > 40) {
+      const drop = bundle.order.shift();
+      if (drop) delete bundle.entries[drop];
+      try {
+        localStorage.setItem(SUMMARY_DISK_KEY, JSON.stringify(bundle));
+      } catch { /* quota */ }
+      return;
+    }
+  }
+}
+
+function getPersistedSummaryJson(lang, title) {
+  const k = diskSummaryKey(lang, title);
+  const bundle = readSummaryDisk();
+  const ent = bundle.entries[k];
+  if (!ent) return null;
+  if (Date.now() - ent.ts > SUMMARY_DISK_TTL_MS) {
+    bundle.order = bundle.order.filter(key => key !== k);
+    delete bundle.entries[k];
+    writeSummaryDisk(bundle);
+    return null;
+  }
+  return ent.json;
+}
+
+function setPersistedSummaryJson(lang, title, json) {
+  const k = diskSummaryKey(lang, title);
+  const bundle = readSummaryDisk();
+  if (bundle.entries[k]) {
+    bundle.entries[k] = { ts: Date.now(), json };
+    writeSummaryDisk(bundle);
+    return;
+  }
+  while (bundle.order.length >= SUMMARY_DISK_MAX_ENTRIES) {
+    const drop = bundle.order.shift();
+    if (drop) delete bundle.entries[drop];
+  }
+  bundle.entries[k] = { ts: Date.now(), json };
+  bundle.order.push(k);
+  writeSummaryDisk(bundle);
+}
+
 // Fetch a single article summary by title
 export async function fetchSummary(title, lang = 'en') {
+  const hit = getPersistedSummaryJson(lang, title);
+  if (hit) return normalizeSummary(hit, lang);
   const url = `${baseUrl(lang)}/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   const data = await fetchWithTimeout(url);
+  setPersistedSummaryJson(lang, title, data);
   return normalizeSummary(data, lang);
 }
 
@@ -163,10 +232,18 @@ export async function fetchCategoriesBatch(titles, lang = 'en') {
 
 // Fetch summaries in **small sequential chunks** (no giant parallel fan-out).
 // Categories are fetched once for titles that actually got summaries.
-export async function fetchSummaryBatch(titles, lang = 'en') {
+/**
+ * @param {string[]} titles
+ * @param {string} [lang='en']
+ * @param {{ includeCategories?: boolean, onChunkProgress?: (info: { chunkIndex: number, totalChunks: number }) => void }} [opts]
+ *   Include categories (extra Action API batch). Omit on first batch for faster time-to-cards.
+ */
+export async function fetchSummaryBatch(titles, lang = 'en', opts = {}) {
+  const { includeCategories = true, onChunkProgress } = opts;
   if (!titles.length) return [];
 
   const SUMMARY_CHUNK = 4;
+  const totalChunks = Math.max(1, Math.ceil(titles.length / SUMMARY_CHUNK));
   const merged = [];
 
   for (let i = 0; i < titles.length; i += SUMMARY_CHUNK) {
@@ -177,11 +254,15 @@ export async function fetchSummaryBatch(titles, lang = 'en') {
       const article = r.value;
       if (article.extract?.length > 50) merged.push(article);
     }
+    onChunkProgress?.({
+      chunkIndex: Math.floor(i / SUMMARY_CHUNK),
+      totalChunks,
+    });
   }
 
-  const okTitles = merged.map(a => a.title);
   let categoryMap = new Map();
-  if (okTitles.length) {
+  if (includeCategories && merged.length) {
+    const okTitles = merged.map(a => a.title);
     try {
       categoryMap = await fetchCategoriesBatch(okTitles, lang);
     } catch {

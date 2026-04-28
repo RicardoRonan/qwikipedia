@@ -194,12 +194,15 @@ export function applyDecay() {
 }
 
 // Build a pool of candidate article titles — all network calls run in parallel
-async function buildCandidatePool(lang = 'en') {
+// Re-runs random fetches if the seen-filter wipes most of the pool.
+async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
+  onProgress?.(6);
   const history = Storage.getHistory();
   const seen = new Set([...history.seenTitles, ...history.dismissedTitles, ...history.likedTitles]);
 
   // Keep candidate generation conservative to avoid bursty API traffic.
-  const topics = pickWeightedTopics(3);
+  // One topic seeded search keeps first paint fast; random titles supply variety.
+  const topics = pickWeightedTopics(1);
   const searches = topics.map(topic => {
     const seeds = TOPIC_SEEDS[topic] || [topic];
     const query = seeds[Math.floor(Math.random() * seeds.length)];
@@ -207,32 +210,63 @@ async function buildCandidatePool(lang = 'en') {
   });
 
   const [randomTitles, ...searchResults] = await Promise.all([
-    fetchRandomTitles(12, lang).catch(() => []),
+    fetchRandomTitles(16, lang).catch(() => []),
     ...searches,
   ]);
+  onProgress?.(11);
 
   const pool = new Set([...randomTitles, ...searchResults.flat()]);
-  return [...pool].filter(t => !seen.has(t));
+
+  /* If history is large, the seen-filter often drains the pool — top up with
+   * extra random pages until we have a workable batch (or give up after 2 tries). */
+  let unseen = [...pool].filter(t => !seen.has(t));
+  let topUps = 0;
+  const TOPUP_MAX = 2;
+  while (unseen.length < minTargetSize && topUps < TOPUP_MAX) {
+    topUps++;
+    const more = await fetchRandomTitles(20, lang).catch(() => []);
+    more.forEach(t => pool.add(t));
+    unseen = [...pool].filter(t => !seen.has(t));
+    onProgress?.(11 + Math.round((topUps / TOPUP_MAX) * 6));
+  }
+
+  onProgress?.(18);
+  return unseen;
 }
 
-// Fetch next batch of feed articles
-export async function fetchFeedBatch(lang = 'en', batchSize = 8) {
-  const candidates = await buildCandidatePool(lang);
+// Fetch next batch of feed articles (`onProgress` is 0–99; caller sets 100% when rendered)
+export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
+  onProgress?.(2);
+  const candidates = await buildCandidatePool(lang, onProgress);
 
   // Shuffle — only fetch summaries for what we realistically need (keeps request count low)
-  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 8);
+  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 4);
 
-  const articles = await fetchSummaryBatch(shuffled, lang);
+  const articles = await fetchSummaryBatch(shuffled, lang, {
+    includeCategories: false,
+    onChunkProgress: onProgress
+      ? ({ chunkIndex, totalChunks }) => {
+          const pct = 20 + ((chunkIndex + 1) / totalChunks) * 62;
+          onProgress(Math.min(82, Math.round(pct)));
+        }
+      : undefined,
+  });
 
-  // Enforce topic diversity: cap 2 per topic per batch
+  onProgress?.(84);
+
+  // Enforce topic diversity when we can infer topics (categories or title seeds).
+  // Without categories, inferTopics is often [] for every title — they would all
+  // bucket as "other" and wrongly cap the batch at 3 articles.
   const topicCounts = {};
   const diverse = [];
   for (const article of articles) {
     const topics = inferTopics(article);
-    const dominant = topics[0] || 'other';
-    topicCounts[dominant] = (topicCounts[dominant] || 0) + 1;
-    if (topicCounts[dominant] <= 3) {
+    if (topics.length === 0) {
       diverse.push(article);
+    } else {
+      const dominant = topics[0];
+      topicCounts[dominant] = (topicCounts[dominant] || 0) + 1;
+      if (topicCounts[dominant] <= 3) diverse.push(article);
     }
     if (diverse.length >= batchSize) break;
   }
@@ -240,14 +274,24 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8) {
   // Pad with random if not enough
   if (diverse.length < 3) {
     try {
+      onProgress?.(86);
       const extraTitles = await fetchRandomTitles(8, lang);
-      const extra = await fetchSummaryBatch(extraTitles, lang);
+      const extra = await fetchSummaryBatch(extraTitles, lang, {
+        includeCategories: false,
+        onChunkProgress: onProgress
+          ? ({ chunkIndex, totalChunks }) => {
+              const pct = 86 + ((chunkIndex + 1) / totalChunks) * 12;
+              onProgress(Math.min(96, Math.round(pct)));
+            }
+          : undefined,
+      });
       extra.slice(0, batchSize - diverse.length).forEach(a => {
         diverse.push(a);
       });
     } catch {}
   }
 
+  onProgress?.(99);
   return diverse;
 }
 

@@ -135,14 +135,17 @@
 
     <!-- ===== Feed Page ===== -->
     <section id="feed-page" class="page active" aria-label="Article feed">
-      <div id="feed-loading-hint" aria-live="polite" style="display:none;">
+      <div id="feed-loading-hint" role="status" aria-live="polite" aria-atomic="true" style="display:none;">
         <svg class="loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
         </svg>
-        <span>Loading data</span>
+        <div class="feed-loading-text">
+          <span id="feed-loading-pct" class="feed-loading-pct">0%</span>
+          <span id="feed-loading-label" class="feed-loading-label">Loading articles</span>
+        </div>
       </div>
       <div id="feed-cards" aria-live="polite" aria-label="Feed articles"></div>
-      <button id="load-more-btn" aria-label="Load more articles">Load more articles</button>
+      <button id="load-more-btn" class="sr-only" aria-label="Load more articles">Load more articles</button>
     </section>
 
     <!-- ===== Stats Page ===== -->

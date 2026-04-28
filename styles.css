@@ -439,14 +439,14 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   margin: 20px 16px 0;
 }
 
-/* ===== Card — Xikipedia-style horizontal layout ===== */
+/* ===== Card — vertical feed (title, extract, media, actions) ===== */
 .card {
   border-bottom: 1px solid var(--border);
   background: var(--card);
   cursor: default;
   transition: background 0.12s;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
   gap: 0;
 }
@@ -466,21 +466,27 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   flex-direction: column;
 }
 
-/* Image column — fixed thumbnail on the right */
+/* Feed media — same horizontal bounds as .card-body text; vertical rhythm matches title gaps */
 .card-image-wrap {
-  flex: 0 0 120px;
-  width: 120px;
-  background: var(--muted);
-  overflow: hidden;
-  align-self: stretch;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0;
 }
 
-.card-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
+.card img.media {
+  border-radius: 16px;
+  border: 1px solid var(--border);
   display: block;
+  margin: 0;
+  max-width: min(512px, 100%);
+  max-height: 330px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
+  background: #fff;
 }
 
 .card-featured-badge {
@@ -563,58 +569,43 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 
 .card-icon-btn svg { width: 16px; height: 16px; }
 
-/* ===== Skeleton ===== */
-.skeleton {
-  border-bottom: 1px solid var(--border);
-  padding: 0;
-  background: var(--card);
-}
-
-.skeleton-img {
-  width: 100%;
-  aspect-ratio: 16/9;
-  background: var(--muted);
-  animation: shimmer 1.6s ease-in-out infinite;
-}
-
-.skeleton-body {
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.skeleton-line {
-  height: 13px;
-  border-radius: 4px;
-  background: var(--muted);
-  animation: shimmer 1.6s ease-in-out infinite;
-}
-
-.skeleton-line.wide   { width: 100%; }
-.skeleton-line.medium { width: 70%; }
-.skeleton-line.short  { width: 40%; }
-.skeleton-title       { height: 18px; width: 80%; }
-
-@keyframes shimmer {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
-}
-
 /* Feed loading hint */
 #feed-loading-hint {
-  margin: 14px 16px 0;
-  padding: 0;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 14px 0 0;
+  padding: 0 16px;
   color: var(--muted-foreground);
   font-size: var(--fs-sm);
-  display: inline-flex;
+  display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.feed-loading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.25;
+}
+
+.feed-loading-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--foreground);
+  font-size: var(--fs-base);
+}
+
+.feed-loading-label {
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
 }
 
 #feed-loading-hint .loading-spinner {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
   animation: spin 0.9s linear infinite;
 }
 
@@ -622,37 +613,17 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   to { transform: rotate(360deg); }
 }
 
-/* ===== Load more ===== */
-#load-more-btn {
-  display: block;
-  width: calc(100% - 32px);
-  margin: 16px 16px;
-  padding: 10px 16px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: transparent;
+.end-of-feed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 20px calc(48px + env(safe-area-inset-bottom, 0));
   color: var(--muted-foreground);
   font-size: var(--fs-sm);
-  font-weight: 500;
-  transition: background 0.15s, color 0.15s;
-  opacity: 0;
-  pointer-events: none;
+  text-align: center;
 }
-
-#load-more-btn.visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-#load-more-btn:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-
-#load-more-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+.end-of-feed p { margin: 0; }
 
 /* ===== Empty / Error states ===== */
 .state-box {
@@ -1399,63 +1370,106 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 }
 
 /* ===== Responsive ===== */
-@media (max-width: 640px) {
-  /* ---- Bottom bar nav on mobile ---- */
+@media (max-width: 768px) {
+  /* ---- shadcn-style bottom tab bar on mobile / small tablets ---- */
   #nav {
     top: auto;
     left: 0;
     right: 0;
     bottom: 0;
     width: 100%;
-    height: 56px;
+    height: auto;
+    min-height: 60px;
     flex-direction: row;
-    justify-content: space-around;
-    align-items: center;
-    padding: 0 8px;
+    align-items: stretch;
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     border-right: none;
     border-top: 1px solid var(--border);
     gap: 0;
+    background: color-mix(in srgb, var(--background) 92%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
   }
 
+  /* Slide off-screen when scrolling down (added by app.js) */
+  #nav.nav-hidden {
+    transform: translateY(calc(100% + env(safe-area-inset-bottom, 0px)));
+  }
+
+  /* Logo hidden on mobile */
   #nav-logo { display: none; }
 
-  #nav-items {
-    flex-direction: row;
-    gap: 0;
-    flex: 1;
-    justify-content: space-around;
-    border-top: none;
-    padding-top: 0;
-    margin-top: 0;
-  }
-
+  /* Flatten the two groups so all buttons share one equal-flex row */
+  #nav-items,
   #nav-user {
-    flex-direction: row;
-    gap: 0;
-    border-top: none;
-    padding-top: 0;
-    margin-top: 0;
+    display: contents;
   }
 
   #nav-user-name { display: none; }
 
-  /* Icon-only on mobile */
-  .nav-tooltip { display: none; }
+  /* Tooltip becomes a tiny caption under each icon (shadcn-style tab) */
+  .nav-tooltip {
+    display: block;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: inherit;
+  }
 
   .nav-btn {
-    width: 48px;
-    height: 44px;
-    padding: 0;
+    flex: 1 1 0;
+    min-height: 56px;
+    width: auto;
+    padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px) * 0); /* safe-area handled on #nav */
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    gap: 0;
+    text-align: center;
+    gap: 4px;
+    position: relative;
+    color: var(--muted-foreground);
+    background: transparent;
+    transition: color 0.15s ease;
   }
+
+  .nav-btn:hover { background: transparent; color: var(--foreground); }
+
+  .nav-btn.active {
+    background: transparent;
+    color: var(--foreground);
+    font-weight: 600;
+  }
+
+  /* shadcn-style active indicator: 2px accent line at the top of the active tab */
+  .nav-btn.active::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 28px;
+    height: 2px;
+    border-radius: 0 0 2px 2px;
+    background: var(--foreground);
+  }
+
+  .nav-btn svg { width: 22px; height: 22px; }
+
+  .nav-btn:active { background: var(--accent); }
 
   /* Full-width, no sidebar offset on mobile */
   #app {
     position: static;
     width: 100%;
     left: auto;
-    padding-bottom: 72px;
+    /* leaves room for nav + iOS home indicator */
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Full-width feed */
@@ -1465,23 +1479,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
     border-right: none;
     border-radius: 0;
   }
-  #load-more-btn {
-    width: 100%;
-    margin: 14px 0;
-    border-radius: 0;
-    border-left: none;
-    border-right: none;
-  }
 
-  /* Stack cards vertically on mobile — image on top */
-  .card {
-    flex-direction: column;
-  }
-  .card-image-wrap {
-    width: 100%;
-    flex: none;
-    height: 180px;
-  }
   .card-body    { padding: 12px 14px 10px; }
   .card-actions { padding: 6px 0 10px; margin-top: auto; }
 

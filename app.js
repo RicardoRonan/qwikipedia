@@ -43,27 +43,13 @@ function showPage(id) {
 
 // ===== Card rendering =====
 
-function createSkeletonCard() {
-  const el = document.createElement('div');
-  el.className = 'skeleton';
-  el.innerHTML = `
-    <div class="skeleton-img"></div>
-    <div class="skeleton-body">
-      <div class="skeleton-line skeleton-title"></div>
-      <div class="skeleton-line wide"></div>
-      <div class="skeleton-line medium"></div>
-    </div>
-  `;
-  return el;
-}
-
 function createCard(article, featured = false) {
   const el = document.createElement('div');
   el.className = 'card';
   el.dataset.title = article.title;
 
   const imageHtml = article.image
-    ? `<div class="card-image-wrap"><img class="card-image" src="${escapeAttr(article.image)}" alt="${escapeAttr(article.displayTitle)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(article.displayTitle)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
     : ``;
 
   const featuredBadge = featured
@@ -75,6 +61,7 @@ function createCard(article, featured = false) {
       ${featuredBadge}
       <h2 class="card-title">${escapeHtml(article.displayTitle)}</h2>
       <p class="card-extract">${escapeHtml(article.extract || '')}</p>
+      ${imageHtml}
       <div class="card-actions">
         <a class="card-read-link" href="${escapeAttr(article.url)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
           ${ICONS.externalLink} wikipedia.org
@@ -85,7 +72,6 @@ function createCard(article, featured = false) {
         </div>
       </div>
     </div>
-    ${imageHtml}
   `;
 
   const likeBtn = el.querySelector('.btn-like');
@@ -152,8 +138,13 @@ function animateDismiss(cardEl, article) {
 // ===== Feed loading =====
 
 const BATCH_SIZE       = 12;  // articles rendered per batch
-const SENTINEL_FROM_END = 4;  // how many cards from the bottom to place the scroll sentinel
-const AUTOLOAD_COOLDOWN_MS = 900;
+const SENTINEL_FROM_END = 2;  // cards from the very bottom; small so it must scroll into view
+const AUTOLOAD_COOLDOWN_MS = 1200;
+/** Pre-fetch when sentinel is within this many px below the viewport bottom */
+const INFINITE_SCROLL_ROOT_MARGIN_PX = 240;
+/** Cap on auto-chained underfill loads after a full reload (prevents short-page loops) */
+const UNDERFILL_MAX_CHAIN = 2;
+let _underfillChain = 0;
 
 // Single in-flight prefetch promise — prevents duplicate background fetches
 let _prefetchPromise = null;
@@ -175,6 +166,37 @@ function consumePrefetch() {
   return p; // caller awaits this
 }
 
+function setFeedLoadingPct(value) {
+  const n = Math.min(100, Math.max(0, Math.round(value)));
+  const el = document.getElementById('feed-loading-pct');
+  if (el) el.textContent = `${n}%`;
+}
+
+let _backoffStatusInterval = null;
+let _loadingLabelDefault = 'Loading articles';
+function refreshLoadingStatus() {
+  const labelEl = document.getElementById('feed-loading-label');
+  if (!labelEl) return;
+  const remaining = getApiBackoffRemainingMs();
+  if (remaining > 250) {
+    labelEl.textContent = `Wikipedia rate-limited — retrying in ${Math.ceil(remaining / 1000)}s`;
+  } else {
+    labelEl.textContent = _loadingLabelDefault;
+  }
+}
+function startLoadingStatusPolling(defaultLabel) {
+  _loadingLabelDefault = defaultLabel || 'Loading articles';
+  if (_backoffStatusInterval) clearInterval(_backoffStatusInterval);
+  refreshLoadingStatus();
+  _backoffStatusInterval = setInterval(refreshLoadingStatus, 1000);
+}
+function stopLoadingStatusPolling() {
+  if (_backoffStatusInterval) {
+    clearInterval(_backoffStatusInterval);
+    _backoffStatusInterval = null;
+  }
+}
+
 async function loadFeed(append = false) {
   if (isLoading) return;
   isLoading = true;
@@ -185,76 +207,95 @@ async function loadFeed(append = false) {
   const container  = document.getElementById('feed-cards');
   const loadMoreBtn = document.getElementById('load-more-btn');
   const loadingHint = document.getElementById('feed-loading-hint');
+  const loadingLabel = document.getElementById('feed-loading-label');
   const lang = Storage.getPrefs().wikiLang || 'en';
 
   // Full reload should not compete with a background prefetch
   if (!append) {
     _prefetchPromise = null;
     _prefetchLang = null;
+    _underfillChain = 0;
   }
 
   // Discard a stale prefetch if the language changed
   if (_prefetchLang && _prefetchLang !== lang) { _prefetchPromise = null; _prefetchLang = null; }
 
-  if (loadMoreBtn) { loadMoreBtn.disabled = true; loadMoreBtn.textContent = 'Loading…'; }
+  if (loadMoreBtn) loadMoreBtn.disabled = true;
   if (loadingHint) loadingHint.style.display = '';
+  startLoadingStatusPolling(append ? 'Loading more articles' : 'Loading articles');
 
-  // Show skeletons only when no prefetch is ready
-  const skeletons = [];
   const hasPrefetch = !!_prefetchPromise;
   const hasExistingFeed = !append && container.querySelector('.card') !== null;
-  if (!append) {
-    // Keep existing content visible during reload to avoid flash.
-    // Only show skeletons on true first-load (empty feed).
-    if (!hasExistingFeed && !hasPrefetch) {
-      container.innerHTML = '';
-      for (let i = 0; i < 5; i++) { const s = createSkeletonCard(); container.appendChild(s); skeletons.push(s); }
-    }
-  } else if (!hasPrefetch) {
-    for (let i = 0; i < 2; i++) { const s = createSkeletonCard(); container.appendChild(s); skeletons.push(s); }
-  }
 
+  setFeedLoadingPct(0);
+
+  if (!append && !hasExistingFeed && !hasPrefetch) container.innerHTML = '';
+
+  let gotArticles = false;
   try {
     let articles;
     let featured = null;
 
-    if (hasPrefetch) {
-      // Consume buffered batch — instant render, no new network call
-      articles = await consumePrefetch();
+    if (append) {
+      if (hasPrefetch) {
+        setFeedLoadingPct(85);
+        articles = await consumePrefetch();
+      } else {
+        articles = await fetchFeedBatch(lang, BATCH_SIZE, setFeedLoadingPct);
+      }
+    } else if (hasPrefetch) {
+      setFeedLoadingPct(85);
+      [articles, featured] = await Promise.all([
+        consumePrefetch(),
+        getFeaturedCard(lang).catch(() => null),
+      ]);
     } else {
-      articles = await fetchFeedBatch(lang, BATCH_SIZE);
+      [articles, featured] = await Promise.all([
+        fetchFeedBatch(lang, BATCH_SIZE, setFeedLoadingPct),
+        getFeaturedCard(lang).catch(() => null),
+      ]);
     }
 
-    if (!append) {
-      featured = await getFeaturedCard(lang).catch(() => null);
-    }
-
-    skeletons.forEach(s => s.remove());
+    setFeedLoadingPct(100);
 
     // Last-resort: if engine returned nothing, fall back to raw random articles
     if (articles.length === 0) {
       try {
         const { fetchRandomTitles, fetchSummaryBatch } = await import('./wiki.js');
-        articles = await fetchSummaryBatch(await fetchRandomTitles(20, lang), lang);
+        articles = await fetchSummaryBatch(await fetchRandomTitles(20, lang), lang, {
+          includeCategories: false,
+          onChunkProgress: ({ chunkIndex, totalChunks }) => {
+            setFeedLoadingPct(10 + Math.round(((chunkIndex + 1) / totalChunks) * 88));
+          },
+        });
       } catch { /* stay empty */ }
     }
 
-    if (articles.length === 0) {
-      // Self-heal old sessions where seenTitles was overfilled by prefetch-era logic
-      if (!append && !_didSeenRecovery) {
+    gotArticles = articles.length > 0;
+
+    if (!gotArticles) {
+      // Self-heal: history grew so large that every random title is filtered out.
+      // Trim the oldest seen titles (keep most recent 50) so future loads have room.
+      if (!_didSeenRecovery) {
         const history = Storage.getHistory();
-        if ((history.seenTitles || []).length > 0) {
+        const seenLen = (history.seenTitles || []).length;
+        if (seenLen > 50) {
           _didSeenRecovery = true;
-          Storage.setHistory({ seenTitles: [] });
+          Storage.setHistory({ seenTitles: (history.seenTitles || []).slice(0, 50) });
           showToast('Refreshing your feed history…', 'info');
           isLoading = false;
           if (loadMoreBtn) { loadMoreBtn.disabled = false; loadMoreBtn.textContent = 'Load more articles'; }
-          if (loadingHint) loadingHint.style.display = 'none';
-          return loadFeed(false);
+          if (loadingHint) {
+            loadingHint.style.display = 'none';
+            setFeedLoadingPct(0);
+          }
+          stopLoadingStatusPolling();
+          return loadFeed(append);
         }
       }
       if (!append && !hasExistingFeed) showEmptyState(container);
-      if (!append && hasExistingFeed) showToast('No new articles right now — keeping current feed', 'info');
+      if (!append && hasExistingFeed) showToast('No new articles right now — pull to refresh', 'info');
+      if (append) showEndOfFeed(container);
     } else {
       if (!append) {
         // Atomic swap to prevent blank flash on reload.
@@ -279,15 +320,23 @@ async function loadFeed(append = false) {
       }
     }
   } catch (err) {
-    skeletons.forEach(s => s.remove());
     if (!append && !hasExistingFeed) showErrorState(container);
     if (!append && hasExistingFeed) showToast('Reload failed — keeping current feed', 'error');
     console.error('Feed load error:', err);
+    if (loadingHint) {
+      loadingHint.style.display = 'none';
+      setFeedLoadingPct(0);
+    }
   }
 
   isLoading = false;
+  stopLoadingStatusPolling();
   if (loadMoreBtn) { loadMoreBtn.disabled = false; loadMoreBtn.textContent = 'Load more articles'; }
-  if (loadingHint) loadingHint.style.display = 'none';
+  if (loadingHint) {
+    loadingHint.style.display = 'none';
+    setFeedLoadingPct(0);
+  }
+  if (loadingLabel) loadingLabel.textContent = _loadingLabelDefault;
 
   // If Wikimedia asked us to slow down, pause auto-loading and prefetch to avoid a request loop.
   const backoffMs = getApiBackoffRemainingMs();
@@ -309,6 +358,30 @@ async function loadFeed(append = false) {
 
   // Start prefetching the NEXT batch in the background — only one at a time
   startPrefetch(lang);
+
+  if (gotArticles) scheduleUnderfillIfShort();
+
+}
+
+/** When there are cards but not enough vertical content to scroll, load another batch automatically. */
+function scheduleUnderfillIfShort() {
+  if (_underfillChain >= UNDERFILL_MAX_CHAIN) return;
+  window.requestAnimationFrame(() => {
+    setTimeout(() => {
+      if (isLoading) return;
+      const wrap = document.getElementById('feed-cards');
+      if (!wrap?.querySelector('.card')) return;
+      // Require a meaningful underfill (more than 1.4x viewport) so we don't chain on
+      // pages that are "almost full" — those should rely on real user scrolling.
+      const shortPage = document.documentElement.scrollHeight < window.innerHeight * 1.4;
+      if (!shortPage) {
+        _underfillChain = 0;
+        return;
+      }
+      _underfillChain++;
+      loadFeed(true);
+    }, 280);
+  });
 }
 
 function attachScrollSentinel() {
@@ -319,39 +392,68 @@ function attachScrollSentinel() {
   if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
 
   const cards = container.querySelectorAll('.card');
-  if (cards.length < SENTINEL_FROM_END + 1) return;
+  if (cards.length === 0) return;
 
-  const targetCard = cards[cards.length - SENTINEL_FROM_END];
+  /* Sentinel sits very near the bottom — auto-load only fires once it actually
+   * scrolls into view, never on initial attachment. */
+  const back       = Math.min(SENTINEL_FROM_END, cards.length - 1);
+  const targetCard = cards[cards.length - 1 - back];
   const sentinel   = document.createElement('div');
   sentinel.className  = 'scroll-sentinel';
   sentinel.style.cssText = 'height:1px;pointer-events:none;';
   targetCard.insertAdjacentElement('afterend', sentinel);
 
-  // Use a small delay before observing to let layout settle —
-  // prevents the observer from firing synchronously on attachment
+  /* Two-phase arming: the observer must first see the sentinel as
+   * NOT intersecting (i.e. still off-screen), then the next intersection
+   * triggers a load. This prevents fire-on-attach loops when the sentinel
+   * happens to be inside the rootMargin trigger zone right after a load. */
+  let armed = false;
+
   setTimeout(() => {
-    if (isLoading) return; // don't arm if another load already started
+    if (isLoading) return;
     scrollObserver = new IntersectionObserver(
       (entries) => {
-        if (!entries[0].isIntersecting || isLoading) return;
+        const isIntersecting = entries[0].isIntersecting;
 
-        // Only auto-load when actually near the bottom (prevents burst loops).
-        const nearBottom =
-          window.scrollY + window.innerHeight >=
-          document.documentElement.scrollHeight - 420;
-        if (!nearBottom) return;
+        if (!armed) {
+          if (!isIntersecting) armed = true;
+          return;
+        }
 
-        // Small cooldown to avoid duplicate observer triggers on reflow.
+        if (!isIntersecting || isLoading) return;
+
         const now = Date.now();
         if (now - _lastAutoLoadAt < AUTOLOAD_COOLDOWN_MS) return;
         _lastAutoLoadAt = now;
 
         loadFeed(true);
       },
-      { rootMargin: '0px', threshold: 0 }
+      {
+        root: null,
+        rootMargin: `0px 0px ${INFINITE_SCROLL_ROOT_MARGIN_PX}px 0px`,
+        threshold: 0,
+      },
     );
     scrollObserver.observe(sentinel);
-  }, 100);
+  }, 120);
+}
+
+function showEndOfFeed(container) {
+  container.querySelector('.end-of-feed')?.remove();
+  const el = document.createElement('div');
+  el.className = 'end-of-feed';
+  el.innerHTML = `
+    <p>You're all caught up.</p>
+    <button class="btn-secondary" id="end-of-feed-retry">Find more articles</button>
+  `;
+  container.appendChild(el);
+  el.querySelector('#end-of-feed-retry')?.addEventListener('click', () => {
+    el.remove();
+    const history = Storage.getHistory();
+    Storage.setHistory({ seenTitles: (history.seenTitles || []).slice(0, 30) });
+    _didSeenRecovery = false;
+    loadFeed(true);
+  });
 }
 
 function showEmptyState(container) {
@@ -964,6 +1066,53 @@ function initPullToRefresh() {
   }, { passive: true });
 }
 
+// ===== Mobile bottom-nav scroll-hide =====
+/**
+ * Hides the bottom nav while the user is scrolling down past a small threshold,
+ * brings it back on any upward scroll. Only active when nav is in bottom-bar mode
+ * (matchMedia matches the same breakpoint as the CSS).
+ */
+function initScrollHideNav() {
+  const nav = document.getElementById('nav');
+  if (!nav) return;
+
+  const mql = window.matchMedia('(max-width: 768px)');
+  let lastY = window.scrollY;
+  let ticking = false;
+  const SHOW_NEAR_TOP_PX = 80;
+  const HIDE_AFTER_PX    = 24;
+
+  function update() {
+    ticking = false;
+    if (!mql.matches) {
+      nav.classList.remove('nav-hidden');
+      return;
+    }
+    const y = window.scrollY;
+    const dy = y - lastY;
+
+    if (y < SHOW_NEAR_TOP_PX) {
+      nav.classList.remove('nav-hidden');
+    } else if (dy > HIDE_AFTER_PX) {
+      nav.classList.add('nav-hidden');
+      lastY = y;
+    } else if (dy < -HIDE_AFTER_PX) {
+      nav.classList.remove('nav-hidden');
+      lastY = y;
+    }
+  }
+
+  window.addEventListener('scroll', () => {
+    if (!ticking) {
+      window.requestAnimationFrame(update);
+      ticking = true;
+    }
+  }, { passive: true });
+
+  // Always show on viewport resize / breakpoint flip
+  mql.addEventListener?.('change', () => nav.classList.remove('nav-hidden'));
+}
+
 // ===== Init =====
 
 async function init() {
@@ -971,6 +1120,10 @@ async function init() {
   const prefs = Storage.getPrefs();
   applyTheme(prefs.theme);
   applyTextScale(prefs.textScale);
+
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    navigator.serviceWorker.register(`${new URL('./sw.js', import.meta.url)}`).catch(() => {});
+  }
 
   // Expose helpers to window for inline handlers
   window.openAuthModal = openAuthModal;
@@ -1065,6 +1218,9 @@ async function init() {
 
   // Pull-to-refresh
   initPullToRefresh();
+
+  // Hide bottom nav on scroll-down (mobile only)
+  initScrollHideNav();
 
   // Onboarding (must come before loadFeed)
   initOnboarding();
