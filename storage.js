@@ -11,6 +11,7 @@ const DEFAULT_PREFS = {
   theme: 'system',
   textScale: 100,
   wikiLang: 'en',
+  interests: [],
 };
 
 const DEFAULT_ENGINE = {
@@ -20,6 +21,7 @@ const DEFAULT_ENGINE = {
 
 const DEFAULT_HISTORY = {
   likedTitles: [],
+  likedArticles: [],
   dismissedTitles: [],
   seenTitles: [],
 };
@@ -85,6 +87,36 @@ export const Storage = {
       h.likedTitles = [title, ...h.likedTitles].slice(0, 300);
       _write(KEYS.HISTORY, h);
     }
+  },
+
+  setLikedArticle(article) {
+    if (!article?.title) return;
+    const h = this.getHistory();
+    const next = [article, ...(h.likedArticles || []).filter(a => a?.title !== article.title)];
+    h.likedArticles = next.slice(0, 300);
+    if (!h.likedTitles.includes(article.title)) {
+      h.likedTitles = [article.title, ...h.likedTitles].slice(0, 300);
+    }
+    _write(KEYS.HISTORY, h);
+  },
+
+  removeLiked(title) {
+    const h = this.getHistory();
+    h.likedTitles = (h.likedTitles || []).filter(t => t !== title);
+    h.likedArticles = (h.likedArticles || []).filter(a => a?.title !== title);
+    _write(KEYS.HISTORY, h);
+  },
+
+  isLiked(title) {
+    const h = this.getHistory();
+    return (h.likedTitles || []).includes(title);
+  },
+
+  getLikedState() {
+    const h = this.getHistory();
+    const likedArticleIds = [...new Set(h.likedTitles || [])];
+    const likedArticles = (h.likedArticles || []).filter(a => a?.title && likedArticleIds.includes(a.title));
+    return { likedArticleIds, likedArticles };
   },
 
   addDismissed(title) {

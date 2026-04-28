@@ -1,6 +1,7 @@
 // engine.js — local recommendation engine
 
 import { Storage } from './storage.js';
+import { normalizeTopic, topicTokens } from './text-utils.js';
 import {
   fetchSummaryBatch,
   fetchRandomTitles,
@@ -112,8 +113,12 @@ export function inferTopics(article) {
     // Primary: match against actual Wikipedia category strings
     const matched = new Set();
     for (const cat of cats) {
+      const categoryTokens = new Set(topicTokens(cat));
       for (const [topic, keywords] of Object.entries(CATEGORY_TOPIC_MAP)) {
-        if (keywords.some(kw => cat.includes(kw))) {
+        if (keywords.some(kw => {
+          const keyTokens = topicTokens(kw);
+          return keyTokens.length > 0 && keyTokens.every(t => categoryTokens.has(t));
+        })) {
           matched.add(topic);
         }
       }
@@ -122,10 +127,13 @@ export function inferTopics(article) {
   }
 
   // Fallback: conservative title-only keyword scan (never full extract)
-  const title = article.title.toLowerCase();
-  return ALL_TOPICS.filter(topic =>
-    TOPIC_SEEDS[topic].some(seed => title.includes(seed))
-  );
+  const titleTokens = new Set(topicTokens(article.title || ''));
+  return ALL_TOPICS.filter(topic => {
+    return TOPIC_SEEDS[topic].some(seed => {
+      const seedTokens = topicTokens(seed);
+      return seedTokens.length > 0 && seedTokens.every(t => titleTokens.has(t));
+    });
+  });
 }
 
 // Weight update constants
@@ -153,12 +161,18 @@ export function recordInteraction(article, action) {
 
 // Pick top N topics by weight; if none trained, return random selection
 function pickWeightedTopics(n = 3) {
+  const selectedInterests = (Storage.getPrefs().interests || []).map(normalizeTopic).filter(Boolean);
+  const selectedSet = new Set(selectedInterests);
   const { topicWeights } = Storage.getEngine();
-  const entries = Object.entries(topicWeights).filter(([, v]) => v > 0);
+  const entries = Object.entries(topicWeights).filter(([topic, v]) => {
+    if (v <= 0) return false;
+    if (!selectedSet.size) return true;
+    return selectedSet.has(normalizeTopic(topic));
+  });
 
   if (entries.length === 0) {
-    // Shuffle all topics and return first n
-    return [...ALL_TOPICS].sort(() => Math.random() - 0.5).slice(0, n);
+    const basePool = selectedSet.size ? ALL_TOPICS.filter(t => selectedSet.has(normalizeTopic(t))) : [...ALL_TOPICS];
+    return [...basePool].sort(() => Math.random() - 0.5).slice(0, n);
   }
 
   const sorted = entries.sort(([, a], [, b]) => b - a);
@@ -203,9 +217,16 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
   // Keep candidate generation conservative to avoid bursty API traffic.
   // One topic seeded search keeps first paint fast; random titles supply variety.
   const topics = pickWeightedTopics(1);
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    console.debug('[feed] selected interests', Storage.getPrefs().interests || []);
+    console.debug('[feed] weighted topics picked', topics);
+  }
   const searches = topics.map(topic => {
     const seeds = TOPIC_SEEDS[topic] || [topic];
     const query = seeds[Math.floor(Math.random() * seeds.length)];
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      console.debug('[feed] fetching query', query);
+    }
     return searchTitles(query, 6, lang).catch(() => []);
   });
 
@@ -261,6 +282,9 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
   const diverse = [];
   for (const article of articles) {
     const topics = inferTopics(article);
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      console.debug('[feed] article topics', { title: article.title, categories: article.categories || [], topics });
+    }
     if (topics.length === 0) {
       diverse.push(article);
     } else {

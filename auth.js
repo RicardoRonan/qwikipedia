@@ -56,6 +56,27 @@ export async function signOut() {
   await client.auth.signOut();
 }
 
+export async function updateDisplayName(displayName) {
+  const client = getClient();
+  if (!client) throw new Error('Auth not available');
+  const value = String(displayName || '').trim();
+  if (value.length < 2) throw new Error('Display name must be at least 2 characters');
+  const { data, error } = await client.auth.updateUser({ data: { display_name: value } });
+  if (error) throw error;
+  return data.user;
+}
+
+export async function sendPasswordReset(email) {
+  const client = getClient();
+  if (!client) throw new Error('Auth not available');
+  const target = String(email || '').trim();
+  if (!target || !target.includes('@')) throw new Error('A valid email is required');
+  const { error } = await client.auth.resetPasswordForEmail(target, {
+    redirectTo: window.location.origin,
+  });
+  if (error) throw error;
+}
+
 export function onAuthStateChange(callback) {
   const client = getClient();
   if (!client) return () => {};
@@ -104,6 +125,7 @@ export async function syncPrefsToCloud(userId) {
     theme: prefs.theme,
     text_scale: prefs.textScale,
     wiki_lang: prefs.wikiLang,
+    interests: prefs.interests || [],
     topic_weights: engine.topicWeights || {},
     // Cap at 300 to mirror the local cap and keep the row small
     liked_titles: (history.likedTitles || []).slice(0, 300),
@@ -122,6 +144,7 @@ export async function pullPrefsFromCloud(userId) {
   if (profile.theme) prefUpdates.theme = profile.theme;
   if (Number.isFinite(profile.text_scale)) prefUpdates.textScale = profile.text_scale;
   if (profile.wiki_lang) prefUpdates.wikiLang = profile.wiki_lang;
+  if (Array.isArray(profile.interests)) prefUpdates.interests = profile.interests;
   if (Object.keys(prefUpdates).length) Storage.setPrefs(prefUpdates);
 
   // Topic weights: only overwrite when the cloud has something meaningful;

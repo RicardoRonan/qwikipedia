@@ -7,6 +7,8 @@ import { applyTheme, applyTextScale, initSettings } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
 import { showToast } from './toast.js';
 import { ICONS } from './icons.js';
+import { cleanWikipediaText } from './text-utils.js';
+import { usePullToRefresh } from './usePullToRefresh.js';
 
 // GSAP helper — gracefully falls back to no-op if CDN hasn't loaded yet
 function gsap() { return window.gsap || null; }
@@ -39,6 +41,12 @@ function showPage(id) {
   document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.page === id);
   });
+
+  if (id === 'account-page') {
+    history.replaceState(null, '', '/account');
+  } else if (location.pathname === '/account') {
+    history.replaceState(null, '', '/');
+  }
 }
 
 // ===== Card rendering =====
@@ -47,6 +55,7 @@ function createCard(article, featured = false) {
   const el = document.createElement('div');
   el.className = 'card';
   el.dataset.title = article.title;
+  const isLiked = Storage.isLiked(article.title);
 
   const imageHtml = article.image
     ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(article.displayTitle)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
@@ -59,8 +68,9 @@ function createCard(article, featured = false) {
   el.innerHTML = `
     <div class="card-body">
       ${featuredBadge}
-      <h2 class="card-title">${escapeHtml(article.displayTitle)}</h2>
-      <p class="card-extract">${escapeHtml(article.extract || '')}</p>
+      <h2 class="card-title">${escapeHtml(cleanWikipediaText(article.displayTitle))}</h2>
+      <p class="card-extract">${escapeHtml(cleanWikipediaText(article.extract || ''))}</p>
+      <button class="card-read-more" type="button" aria-expanded="false" hidden>...read more</button>
       ${imageHtml}
       <div class="card-actions">
         <a class="card-read-link" href="${escapeAttr(article.url)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
@@ -68,7 +78,7 @@ function createCard(article, featured = false) {
         </a>
         <div class="card-icon-group">
           <button class="card-icon-btn btn-dislike" aria-label="Not interested">${ICONS.x}</button>
-          <button class="card-icon-btn btn-like" aria-label="Like this article">${ICONS.heart}</button>
+          <button class="card-icon-btn btn-like ${isLiked ? 'liked' : ''}" aria-label="Like this article">${isLiked ? ICONS.heartFilled : ICONS.heart}</button>
         </div>
       </div>
     </div>
@@ -76,6 +86,8 @@ function createCard(article, featured = false) {
 
   const likeBtn = el.querySelector('.btn-like');
   const dislikeBtn = el.querySelector('.btn-dislike');
+  const extractEl = el.querySelector('.card-extract');
+  const readMoreBtn = el.querySelector('.card-read-more');
 
   likeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -87,6 +99,8 @@ function createCard(article, featured = false) {
     animateDismiss(el, article);
   });
 
+  setupExtractExpansion(el, extractEl, readMoreBtn);
+
   // Entrance animation
   const g = gsap();
   if (g) {
@@ -96,28 +110,64 @@ function createCard(article, featured = false) {
   return el;
 }
 
+function setupExtractExpansion(cardEl, extractEl, readMoreBtn) {
+  if (!cardEl || !extractEl || !readMoreBtn) return;
+
+  const initialize = () => {
+    if (!cardEl.isConnected) {
+      window.requestAnimationFrame(initialize);
+      return;
+    }
+
+    // Measure truncation after layout; if clamped, show "...read more".
+    const isTruncated = extractEl.scrollHeight > extractEl.clientHeight + 1;
+    if (!isTruncated) {
+      readMoreBtn.hidden = true;
+      return;
+    }
+
+    readMoreBtn.hidden = false;
+    readMoreBtn.addEventListener('click', () => {
+      const expanded = extractEl.classList.toggle('expanded');
+      readMoreBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      readMoreBtn.textContent = expanded ? 'show less' : '...read more';
+    });
+  };
+
+  window.requestAnimationFrame(initialize);
+}
+
 function animateLike(cardEl, likeBtn, article) {
   const g = gsap();
-  recordInteraction(article, 'like');
-  Storage.incrementStat('totalLiked');
-  _sessionLiked++;
+  const alreadyLiked = Storage.isLiked(article.title);
+  if (alreadyLiked) {
+    Storage.removeLiked(article.title);
+    likeBtn.innerHTML = ICONS.heart;
+    likeBtn.classList.remove('liked');
+    showToast('Removed from likes', 'info');
+  } else {
+    recordInteraction(article, 'like');
+    Storage.setLikedArticle({
+      title: article.title,
+      displayTitle: cleanWikipediaText(article.displayTitle),
+      extract: cleanWikipediaText(article.extract || ''),
+      image: article.image || null,
+      url: article.url || null,
+      lang: article.lang || 'en',
+    });
+    Storage.incrementStat('totalLiked');
+    _sessionLiked++;
+    likeBtn.innerHTML = ICONS.heartFilled;
+    likeBtn.classList.add('liked');
+    showToast('Added to likes', 'success');
+  }
   updateNavStats();
   if (currentUser) scheduleSyncPrefs(currentUser.id);
   // Refresh the likes section on the settings page (no-op if not yet rendered)
   import('./settings.js').then(m => m.renderLikesSection?.()).catch(() => {});
 
   if (g) {
-    const tl = g.timeline({ onComplete: () => cardEl.remove() });
-    // Heart burst: swap to filled, scale up then settle
-    likeBtn.innerHTML = ICONS.heartFilled;
-    likeBtn.classList.add('liked');
-    tl.to(likeBtn, { scale: 1.55, duration: 0.18, ease: 'back.out(3)' })
-      .to(likeBtn, { scale: 1, duration: 0.12, ease: 'power1.in' })
-      .to(cardEl,  { opacity: 0, y: -18, duration: 0.28, ease: 'power2.in' }, '+=0.08');
-  } else {
-    likeBtn.innerHTML = ICONS.heartFilled;
-    likeBtn.classList.add('liked');
-    setTimeout(() => cardEl.remove(), 380);
+    g.fromTo(likeBtn, { scale: 1 }, { scale: 1.35, duration: 0.14, yoyo: true, repeat: 1, ease: 'back.out(3)' });
   }
 }
 
@@ -155,6 +205,8 @@ let _prefetchPromise = null;
 let _prefetchLang    = null;
 let _lastAutoLoadAt  = 0;
 let _didSeenRecovery = false;
+const FEED_SESSION_CACHE_KEY = 'sw_feed_session_cache_v1';
+const FEED_PERSISTED_CACHE_KEY = 'sw_feed_cache_v1';
 
 function startPrefetch(lang) {
   // Never start a second prefetch if one is already in flight for this language
@@ -177,6 +229,55 @@ function setFeedLoadingPct(value) {
   const n = Math.min(100, Math.max(0, Math.round(value)));
   const el = document.getElementById('feed-loading-pct');
   if (el) el.textContent = `${n}%`;
+}
+
+function snapshotFeedSession() {
+  const cards = [...document.querySelectorAll('#feed-cards .card')];
+  const articles = cards.map(card => {
+    const title = card.dataset.title;
+    const liked = Storage.getLikedState().likedArticles.find(a => a?.title === title);
+    return liked || { title };
+  }).filter(a => a?.title);
+  try {
+    const payload = JSON.stringify({ ts: Date.now(), articles });
+    sessionStorage.setItem(FEED_SESSION_CACHE_KEY, payload);
+    localStorage.setItem(FEED_PERSISTED_CACHE_KEY, payload);
+  } catch {}
+}
+
+function restoreFeedSession(container) {
+  try {
+    const raw = sessionStorage.getItem(FEED_SESSION_CACHE_KEY) || localStorage.getItem(FEED_PERSISTED_CACHE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.ts > 1000 * 60 * 30) return false;
+    if (!Array.isArray(parsed.articles) || parsed.articles.length === 0) return false;
+    const frag = document.createDocumentFragment();
+    const added = new Set();
+    parsed.articles.forEach(article => {
+      if (!article?.title || added.has(article.title)) return;
+      added.add(article.title);
+      frag.appendChild(createCard(article));
+    });
+    container.innerHTML = '';
+    container.appendChild(frag);
+    attachScrollSentinel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function appendUniqueArticles(container, articles = []) {
+  const onScreen = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
+  articles.forEach(a => {
+    if (!a?.title || onScreen.has(a.title)) return;
+    onScreen.add(a.title);
+    Storage.addSeen(a.title);
+    container.appendChild(createCard(a));
+    Storage.incrementStat('totalSeen');
+    _sessionSeen++;
+  });
 }
 
 let _backoffStatusInterval = null;
@@ -209,15 +310,11 @@ function silentBackgroundRefresh(container, lang) {
     return;
   }
   fetchFeedBatch(lang, BATCH_SIZE).then(fresh => {
-    const onScreen = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
-    const add = fresh.filter(a => !onScreen.has(a.title));
-    add.forEach(a => {
-      Storage.addSeen(a.title);
-      container.appendChild(createCard(a));
-      Storage.incrementStat('totalSeen');
-      _sessionSeen++;
-    });
-    if (add.length) attachScrollSentinel();
+    const before = container.querySelectorAll('.card').length;
+    appendUniqueArticles(container, fresh);
+    const after = container.querySelectorAll('.card').length;
+    const addedAny = after > before;
+    if (addedAny) attachScrollSentinel();
     startPrefetch(lang);
   }).catch(() => {
     startPrefetch(lang);
@@ -226,27 +323,15 @@ function silentBackgroundRefresh(container, lang) {
 
 /** Append cached articles silently (used for auto-scroll loads when prefetch isn't ready). */
 function appendCachedThenRefresh(container, cached, lang) {
-  cached.forEach(a => {
-    Storage.addSeen(a.title);
-    container.appendChild(createCard(a));
-    Storage.incrementStat('totalSeen');
-    _sessionSeen++;
-  });
+  appendUniqueArticles(container, cached);
   attachScrollSentinel();
   silentBackgroundRefresh(container, lang);
 }
 
 /** Paint cached articles immediately, then silently fetch fresh ones and append non-dupes. */
 function renderCachedThenRefresh(container, cached, lang) {
-  const frag = document.createDocumentFragment();
-  cached.forEach(a => {
-    Storage.addSeen(a.title);
-    frag.appendChild(createCard(a));
-    Storage.incrementStat('totalSeen');
-    _sessionSeen++;
-  });
   container.innerHTML = '';
-  container.appendChild(frag);
+  appendUniqueArticles(container, cached);
 
   // Hide any leftover loading hint — cached articles are visible now.
   const hint = document.getElementById('feed-loading-hint');
@@ -422,24 +507,11 @@ async function loadFeed(append = false) {
     } else {
       if (!append) {
         // Atomic swap to prevent blank flash on reload.
-        const frag = document.createDocumentFragment();
-        if (featured) frag.appendChild(createCard(featured, true));
-        articles.forEach(a => {
-          Storage.addSeen(a.title);
-          frag.appendChild(createCard(a));
-          Storage.incrementStat('totalSeen');
-          _sessionSeen++;
-        });
         container.innerHTML = '';
-        container.appendChild(frag);
+        if (featured) container.appendChild(createCard(featured, true));
+        appendUniqueArticles(container, articles);
       } else {
-        articles.forEach(a => {
-          // Mark seen only when rendered (never during prefetch generation)
-          Storage.addSeen(a.title);
-          container.appendChild(createCard(a));
-          Storage.incrementStat('totalSeen');
-          _sessionSeen++;
-        });
+        appendUniqueArticles(container, articles);
       }
     }
   } catch (err) {
@@ -460,6 +532,7 @@ async function loadFeed(append = false) {
     setFeedLoadingPct(0);
   }
   if (loadingLabel) loadingLabel.textContent = _loadingLabelDefault;
+  snapshotFeedSession();
 
   // If Wikimedia asked us to slow down, pause auto-loading and prefetch quietly.
   const tailBackoffMs = getApiBackoffRemainingMs();
@@ -920,6 +993,7 @@ function initOnboarding() {
     const weights = { ...engine.topicWeights };
     selected.forEach(topic => { weights[topic] = (weights[topic] || 0) + 5; });
     Storage.setEngine({ topicWeights: weights });
+    Storage.setPrefs({ interests: [...selected] });
     localStorage.setItem('sw_onboarded', '1');
     if (currentUser) scheduleSyncPrefs(currentUser.id);
 
@@ -1081,9 +1155,7 @@ function renderStatsPage() {
     const g = gsap();
 
     const doRemove = () => {
-      const h = Storage.getHistory();
-      h.likedTitles = h.likedTitles.filter(t => t !== title);
-      Storage.setHistory(h);
+      Storage.removeLiked(title);
       // Also nudge the engine weight down slightly
       const eng = Storage.getEngine();
       const weights = { ...eng.topicWeights };
@@ -1125,67 +1197,20 @@ function renderStatsPage() {
 // ===== Pull-to-refresh =====
 
 function initPullToRefresh() {
-  let startY = 0;
-  let pulling = false;
-  const THRESHOLD = 72;
-
-  // Inject Lucide refresh icon into the PTR indicator
   const indicator = document.getElementById('ptr-indicator');
+  const feedContainer = document.getElementById('feed-page');
   const spinnerWrap = indicator?.querySelector('.ptr-spinner-wrap');
   if (spinnerWrap) spinnerWrap.innerHTML = ICONS.refreshCw;
-
-  const spinnerEl = indicator?.querySelector('svg');
-
-  function setIndicator(dy) {
-    if (!indicator) return;
-    const progress = Math.min(dy / THRESHOLD, 1);
-    const clampedDy = Math.min(dy, THRESHOLD + 16);
-    indicator.style.transform = `translateX(-50%) translateY(${clampedDy}px)`;
-    indicator.style.opacity = String(progress);
-    const label = indicator.querySelector('.ptr-label');
-    if (label) label.textContent = progress >= 1 ? 'Release to refresh' : 'Pull to refresh';
-    if (spinnerEl) spinnerEl.style.transform = `rotate(${progress * 200}deg)`;
-  }
-
-  function resetIndicator() {
-    const g = gsap();
-    if (!indicator) return;
-    if (g) {
-      g.to(indicator, { y: 0, opacity: 0, duration: 0.25, ease: 'power2.out',
-        onComplete: () => { indicator.style.transform = 'translateX(-50%) translateY(0)'; }
-      });
-    } else {
-      indicator.style.transition = 'transform 0.25s ease, opacity 0.25s ease';
-      indicator.style.transform = 'translateX(-50%) translateY(0)';
-      indicator.style.opacity = '0';
-      setTimeout(() => { if (indicator) indicator.style.transition = ''; }, 260);
-    }
-  }
-
-  document.addEventListener('touchstart', e => {
-    if (window.scrollY === 0) {
-      startY = e.touches[0].clientY;
-      pulling = true;
-    }
-  }, { passive: true });
-
-  document.addEventListener('touchmove', e => {
-    if (!pulling) return;
-    const dy = e.touches[0].clientY - startY;
-    if (dy > 0) setIndicator(dy);
-  }, { passive: true });
-
-  document.addEventListener('touchend', e => {
-    if (!pulling) return;
-    pulling = false;
-    const dy = e.changedTouches[0].clientY - startY;
-    resetIndicator();
-    if (dy >= THRESHOLD && !isLoading) {
-      Storage.reset();
-      loadFeed(false);
+  usePullToRefresh({
+    container: feedContainer,
+    indicator,
+    isLoading: () => isLoading,
+    canStart: () => window.scrollY <= 0,
+    onRefresh: async () => {
+      await loadFeed(false);
       showToast('Feed refreshed', 'info');
-    }
-  }, { passive: true });
+    },
+  });
 }
 
 // ===== Mobile bottom-nav scroll-hide =====
@@ -1258,9 +1283,19 @@ async function init() {
 
   // Nav routing (page buttons)
   document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.preventDefault();
       const page = btn.dataset.page;
+      if (page === 'account-page') {
+        const { getCurrentUser } = await import('./auth.js');
+        const user = await getCurrentUser();
+        if (!user) {
+          openAuthModal('signin');
+          return;
+        }
+        const { renderAccountPage } = await import('./account.js');
+        await renderAccountPage();
+      }
       showPage(page);
       if (page === 'stats-page') renderStatsPage();
     });
@@ -1295,13 +1330,11 @@ async function init() {
     const { getCurrentUser } = await import('./auth.js');
     const user = await getCurrentUser();
     if (user) {
-      showPage('settings-page');
+      showPage('account-page');
       document.querySelectorAll('.nav-btn[data-page]').forEach(b => b.classList.remove('active'));
-      document.querySelector('.nav-btn[data-page="settings-page"]')?.classList.add('active');
-      // Scroll to account section smoothly
-      setTimeout(() => {
-        document.getElementById('account-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 50);
+      document.querySelector('.nav-btn[data-page="account-page"]')?.classList.add('active');
+      const { renderAccountPage } = await import('./account.js');
+      renderAccountPage();
     } else {
       openAuthModal('signin');
     }
@@ -1345,8 +1378,10 @@ async function init() {
     }
 
     const { renderAccountSection, renderLikesSection } = await import('./settings.js');
+    const { renderAccountPage } = await import('./account.js');
     renderAccountSection();
     renderLikesSection();
+    renderAccountPage();
   });
 
   // Sync prefs whenever the page is hidden (catches changes that didn't trigger
@@ -1362,6 +1397,7 @@ async function init() {
     if (document.visibilityState === 'hidden') flushSessionTime();
   });
   window.addEventListener('pagehide', flushSessionTime);
+  window.addEventListener('pagehide', snapshotFeedSession);
 
   // Lightbox
   initLightbox();
@@ -1379,10 +1415,16 @@ async function init() {
   applyDecay();
 
   // Start the feed
-  showPage('feed-page');
+  showPage(location.pathname === '/account' ? 'account-page' : 'feed-page');
+  if (location.pathname === '/account') {
+    const { renderAccountPage } = await import('./account.js');
+    renderAccountPage();
+  }
   // Only auto-load feed if onboarding is already done
   if (localStorage.getItem('sw_onboarded')) {
-    await loadFeed(false);
+    const restored = restoreFeedSession(document.getElementById('feed-cards'));
+    if (!restored) await loadFeed(false);
+    else startPrefetch(Storage.getPrefs().wikiLang || 'en');
   }
   updateNavStats();
 }

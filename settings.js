@@ -136,12 +136,10 @@ function renderInterestsSection() {
   const BOOST = 5;
 
   function getActiveTopics() {
+    const fromPrefs = new Set((Storage.getPrefs().interests || []).map(v => String(v).toLowerCase().trim()).filter(Boolean));
+    if (fromPrefs.size) return fromPrefs;
     const { topicWeights } = Storage.getEngine();
-    return new Set(
-      INTEREST_OPTIONS
-        .filter(({ id }) => (topicWeights[id] || 0) > 0)
-        .map(({ id }) => id)
-    );
+    return new Set(INTEREST_OPTIONS.filter(({ id }) => (topicWeights[id] || 0) > 0).map(({ id }) => id));
   }
 
   function buildChips() {
@@ -166,6 +164,9 @@ function renderInterestsSection() {
           weights[id] = BOOST;
         }
         Storage.setEngine({ topicWeights: weights });
+        const currentPrefs = Storage.getPrefs().interests || [];
+        const nextPrefs = isActive ? currentPrefs.filter(t => t !== id) : [...new Set([...currentPrefs, id])];
+        Storage.setPrefs({ interests: nextPrefs });
 
         // Animate and rebuild
         chip.classList.toggle('selected', !isActive);
@@ -445,9 +446,7 @@ function bindLikesEvents() {
       const title = btn.dataset.unlikeTitle;
       const card = btn.closest('.like-card');
 
-      const h = Storage.getHistory();
-      h.likedTitles = (h.likedTitles || []).filter(t => t !== title);
-      Storage.setHistory(h);
+      Storage.removeLiked(title);
 
       const user = await getCurrentUser();
       if (user) scheduleSyncPrefs(user.id);

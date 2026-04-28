@@ -1,3 +1,4 @@
+import { cleanWikipediaText } from './text-utils.js';
 // wiki.js — Wikipedia API adapters following the Wikimedia rate-limit best practices
 // https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits
 
@@ -125,9 +126,9 @@ async function fetchWithTimeout(url, retries = MAX_RETRIES) {
 // Normalize a raw REST summary response into our card model
 function normalizeSummary(raw, lang = 'en') {
   return {
-    title: raw.title || '',
-    displayTitle: raw.displaytitle?.replace(/<[^>]+>/g, '') || raw.title || '',
-    extract: raw.extract || '',
+    title: cleanWikipediaText(raw.title || ''),
+    displayTitle: cleanWikipediaText(raw.displaytitle || raw.title || ''),
+    extract: cleanWikipediaText(raw.extract || ''),
     image: raw.thumbnail?.source || null,
     url: raw.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(raw.title)}`,
     categories: [],   // populated by fetchCategoriesBatch

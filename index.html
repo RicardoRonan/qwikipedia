@@ -50,6 +50,13 @@
         </svg>
         <span class="nav-tooltip">Settings</span>
       </button>
+      <button class="nav-btn" data-page="account-page" aria-label="Account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span class="nav-tooltip">Account</span>
+      </button>
     </div>
 
     <!-- User / sign-in (pushed to bottom on desktop) -->
@@ -135,7 +142,7 @@
 
     <!-- ===== Feed Page ===== -->
     <section id="feed-page" class="page active" aria-label="Article feed">
-      <div id="feed-loading-hint" role="status" aria-live="polite" aria-atomic="true" style="display:none;">
+      <div id="feed-loading-hint" role="status" aria-live="polite" aria-atomic="true" aria-busy="true" style="display:none;">
         <svg class="loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
         </svg>
@@ -146,6 +153,14 @@
       </div>
       <div id="feed-cards" aria-live="polite" aria-label="Feed articles"></div>
       <button id="load-more-btn" class="sr-only" aria-label="Load more articles">Load more articles</button>
+    </section>
+
+    <section id="account-page" class="page" aria-label="Account settings">
+      <div class="settings-page-header">
+        <h1>Account</h1>
+        <p>Manage your profile and security</p>
+      </div>
+      <div id="account-page-content"></div>
     </section>
 
     <!-- ===== Stats Page ===== -->
