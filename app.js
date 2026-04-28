@@ -2,9 +2,9 @@
 
 import { Storage } from './storage.js';
 import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay, inferTopics } from './engine.js';
-import { getApiBackoffRemainingMs, clearApiBackoff } from './wiki.js';
+import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles } from './wiki.js';
 import { applyTheme, applyTextScale, initSettings } from './settings.js';
-import { onAuthStateChange, pullPrefsFromCloud } from './auth.js';
+import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
 import { showToast } from './toast.js';
 import { ICONS } from './icons.js';
 
@@ -102,6 +102,9 @@ function animateLike(cardEl, likeBtn, article) {
   Storage.incrementStat('totalLiked');
   _sessionLiked++;
   updateNavStats();
+  if (currentUser) scheduleSyncPrefs(currentUser.id);
+  // Refresh the likes section on the settings page (no-op if not yet rendered)
+  import('./settings.js').then(m => m.renderLikesSection?.()).catch(() => {});
 
   if (g) {
     const tl = g.timeline({ onComplete: () => cardEl.remove() });
@@ -124,6 +127,7 @@ function animateDismiss(cardEl, article) {
   Storage.incrementStat('totalDismissed');
   _sessionDismissed++;
   updateNavStats();
+  if (currentUser) scheduleSyncPrefs(currentUser.id);
 
   if (g) {
     g.to(cardEl, {
@@ -137,7 +141,7 @@ function animateDismiss(cardEl, article) {
 
 // ===== Feed loading =====
 
-const BATCH_SIZE       = 12;  // articles rendered per batch
+const BATCH_SIZE       = 8;   // articles rendered per batch (keeps per-load API cost low)
 const SENTINEL_FROM_END = 2;  // cards from the very bottom; small so it must scroll into view
 const AUTOLOAD_COOLDOWN_MS = 1200;
 /** Pre-fetch when sentinel is within this many px below the viewport bottom */
@@ -155,6 +159,9 @@ let _didSeenRecovery = false;
 function startPrefetch(lang) {
   // Never start a second prefetch if one is already in flight for this language
   if (_prefetchPromise && _prefetchLang === lang) return;
+  // Don't fan out network calls while Wikipedia is asking us to back off.
+  // The sentinel will re-arm and prefetch will resume once cooldown expires.
+  if (getApiBackoffRemainingMs() > 1000) return;
   _prefetchLang    = lang;
   _prefetchPromise = fetchFeedBatch(lang, BATCH_SIZE).catch(() => []);
 }
@@ -176,14 +183,89 @@ let _backoffStatusInterval = null;
 let _loadingLabelDefault = 'Loading articles';
 function refreshLoadingStatus() {
   const labelEl = document.getElementById('feed-loading-label');
+  const hintEl  = document.getElementById('feed-loading-hint');
   if (!labelEl) return;
   const remaining = getApiBackoffRemainingMs();
+
+  // If cards are already on screen, NEVER show an alarming banner —
+  // the user already has content; the next load will resume silently.
   if (remaining > 250) {
-    labelEl.textContent = `Wikipedia rate-limited — retrying in ${Math.ceil(remaining / 1000)}s`;
+    const hasCards = !!document.querySelector('#feed-cards .card');
+    if (hasCards && hintEl) {
+      hintEl.style.display = 'none';
+      return;
+    }
+    labelEl.textContent = `Easing off Wikipedia for ${Math.ceil(remaining / 1000)}s…`;
   } else {
     labelEl.textContent = _loadingLabelDefault;
   }
 }
+/** Schedule a silent background refresh (skipped while we're in backoff). */
+function silentBackgroundRefresh(container, lang) {
+  if (getApiBackoffRemainingMs() > 1000) {
+    // Wait out the cooldown, then try once more (silently).
+    const wait = getApiBackoffRemainingMs() + 250;
+    setTimeout(() => silentBackgroundRefresh(container, lang), wait);
+    return;
+  }
+  fetchFeedBatch(lang, BATCH_SIZE).then(fresh => {
+    const onScreen = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
+    const add = fresh.filter(a => !onScreen.has(a.title));
+    add.forEach(a => {
+      Storage.addSeen(a.title);
+      container.appendChild(createCard(a));
+      Storage.incrementStat('totalSeen');
+      _sessionSeen++;
+    });
+    if (add.length) attachScrollSentinel();
+    startPrefetch(lang);
+  }).catch(() => {
+    startPrefetch(lang);
+  });
+}
+
+/** Append cached articles silently (used for auto-scroll loads when prefetch isn't ready). */
+function appendCachedThenRefresh(container, cached, lang) {
+  cached.forEach(a => {
+    Storage.addSeen(a.title);
+    container.appendChild(createCard(a));
+    Storage.incrementStat('totalSeen');
+    _sessionSeen++;
+  });
+  attachScrollSentinel();
+  silentBackgroundRefresh(container, lang);
+}
+
+/** Paint cached articles immediately, then silently fetch fresh ones and append non-dupes. */
+function renderCachedThenRefresh(container, cached, lang) {
+  const frag = document.createDocumentFragment();
+  cached.forEach(a => {
+    Storage.addSeen(a.title);
+    frag.appendChild(createCard(a));
+    Storage.incrementStat('totalSeen');
+    _sessionSeen++;
+  });
+  container.innerHTML = '';
+  container.appendChild(frag);
+
+  // Hide any leftover loading hint — cached articles are visible now.
+  const hint = document.getElementById('feed-loading-hint');
+  if (hint) hint.style.display = 'none';
+  stopLoadingStatusPolling();
+
+  // Infinite scroll armed right away — no waiting
+  attachScrollSentinel();
+
+  silentBackgroundRefresh(container, lang);
+
+  // Featured card (silent, no blocking) — also gated on backoff
+  if (getApiBackoffRemainingMs() <= 1000) getFeaturedCard(lang).then(featured => {
+    if (!featured) return;
+    if (container.querySelector(`.card[data-title="${CSS.escape(featured.title)}"]`)) return;
+    container.insertBefore(createCard(featured, true), container.firstChild);
+  }).catch(() => {});
+}
+
 function startLoadingStatusPolling(defaultLabel) {
   _loadingLabelDefault = defaultLabel || 'Loading articles';
   if (_backoffStatusInterval) clearInterval(_backoffStatusInterval);
@@ -220,12 +302,52 @@ async function loadFeed(append = false) {
   // Discard a stale prefetch if the language changed
   if (_prefetchLang && _prefetchLang !== lang) { _prefetchPromise = null; _prefetchLang = null; }
 
+  const hasPrefetch = !!_prefetchPromise;
+  const hasExistingFeed = !append && container.querySelector('.card') !== null;
+
+  /* ── Cache-first rendering ──────────────────────────────────────────────────
+   * If we have cached articles, paint them instantly (no spinner) and refresh
+   * fresh ones in the background. The percentage loader only shows during
+   * true "bulk" loads (first-run / empty cache) or explicit user retries. */
+  const seenTitles = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
+  const cachedAvailable = getCachedArticles(lang, BATCH_SIZE).filter(a => !seenTitles.has(a.title));
+
+  if (!append && !hasExistingFeed && !hasPrefetch && cachedAvailable.length >= 4) {
+    renderCachedThenRefresh(container, cachedAvailable, lang);
+    isLoading = false;
+    return;
+  }
+
+  if (append && !hasPrefetch && cachedAvailable.length >= 4) {
+    appendCachedThenRefresh(container, cachedAvailable, lang);
+    isLoading = false;
+    return;
+  }
+
+  /* ── Backoff guard ──────────────────────────────────────────────────────────
+   * Wikipedia is asking us to slow down. If we have ANY cached articles, append
+   * them silently. Otherwise just stop — never show the alarm banner over a
+   * feed that already has content. The sentinel will re-arm after the backoff
+   * window so loading resumes naturally. */
+  const backoffMs = getApiBackoffRemainingMs();
+  if (backoffMs > 1000) {
+    if (cachedAvailable.length > 0) {
+      appendCachedThenRefresh(container, cachedAvailable, lang);
+      isLoading = false;
+      return;
+    }
+    // No cache to fall back on. If there are already cards on screen, do nothing
+    // visible — re-arm the sentinel after the cooldown so scrolling resumes.
+    if (hasExistingFeed || append) {
+      isLoading = false;
+      setTimeout(() => { if (!isLoading) attachScrollSentinel(); }, backoffMs + 250);
+      return;
+    }
+  }
+
   if (loadMoreBtn) loadMoreBtn.disabled = true;
   if (loadingHint) loadingHint.style.display = '';
   startLoadingStatusPolling(append ? 'Loading more articles' : 'Loading articles');
-
-  const hasPrefetch = !!_prefetchPromise;
-  const hasExistingFeed = !append && container.querySelector('.card') !== null;
 
   setFeedLoadingPct(0);
 
@@ -258,11 +380,12 @@ async function loadFeed(append = false) {
 
     setFeedLoadingPct(100);
 
-    // Last-resort: if engine returned nothing, fall back to raw random articles
+    // Last-resort: if engine returned nothing, fall back to a small raw-random batch.
+    // Kept small to avoid bursting over Wikimedia's per-minute caps.
     if (articles.length === 0) {
       try {
         const { fetchRandomTitles, fetchSummaryBatch } = await import('./wiki.js');
-        articles = await fetchSummaryBatch(await fetchRandomTitles(20, lang), lang, {
+        articles = await fetchSummaryBatch(await fetchRandomTitles(10, lang), lang, {
           includeCategories: false,
           onChunkProgress: ({ chunkIndex, totalChunks }) => {
             setFeedLoadingPct(10 + Math.round(((chunkIndex + 1) / totalChunks) * 88));
@@ -338,18 +461,15 @@ async function loadFeed(append = false) {
   }
   if (loadingLabel) loadingLabel.textContent = _loadingLabelDefault;
 
-  // If Wikimedia asked us to slow down, pause auto-loading and prefetch to avoid a request loop.
-  const backoffMs = getApiBackoffRemainingMs();
-  const effectivePause = Math.max(backoffMs, 0);
-  if (effectivePause > 0) {
-    const seconds = Math.ceil(effectivePause / 1000);
-    showToast(`Wikipedia rate-limited requests. Pausing auto-load for ${seconds}s.`, 'info');
+  // If Wikimedia asked us to slow down, pause auto-loading and prefetch quietly.
+  const tailBackoffMs = getApiBackoffRemainingMs();
+  if (tailBackoffMs > 0) {
     setTimeout(() => {
       if (!isLoading) {
         attachScrollSentinel();
         startPrefetch(lang);
       }
-    }, effectivePause + 200);
+    }, tailBackoffMs + 200);
     return;
   }
 
@@ -801,6 +921,7 @@ function initOnboarding() {
     selected.forEach(topic => { weights[topic] = (weights[topic] || 0) + 5; });
     Storage.setEngine({ topicWeights: weights });
     localStorage.setItem('sw_onboarded', '1');
+    if (currentUser) scheduleSyncPrefs(currentUser.id);
 
     const g = gsap();
     if (g) {
@@ -967,6 +1088,7 @@ function renderStatsPage() {
       const eng = Storage.getEngine();
       const weights = { ...eng.topicWeights };
       Storage.setEngine({ topicWeights: weights });
+      if (currentUser) scheduleSyncPrefs(currentUser.id);
       showToast(`Unliked "${title}"`, 'info');
       renderStatsPage();
     };
@@ -1191,20 +1313,48 @@ async function init() {
   // Settings page
   initSettings();
 
-  // Auth state listener
+  // Auth state listener — pull prefs on login, push local prefs on first sign-up
   onAuthStateChange(async user => {
+    const wasSignedIn = !!currentUser;
     currentUser = user;
     updateNavUser(user);
+
     if (user) {
       try {
-        await pullPrefsFromCloud(user.id);
+        const profile = await pullPrefsFromCloud(user.id);
+
+        // Apply pulled prefs to the live UI
         const refreshedPrefs = Storage.getPrefs();
         applyTheme(refreshedPrefs.theme);
         applyTextScale(refreshedPrefs.textScale);
+
+        // Reflect pulled language in the selector and reload the feed if it changed
+        const langSelect = document.getElementById('wiki-lang-select');
+        if (langSelect && refreshedPrefs.wikiLang && langSelect.value !== refreshedPrefs.wikiLang) {
+          langSelect.value = refreshedPrefs.wikiLang;
+          window.reloadFeed?.();
+        }
+
+        // Brand-new account (no row yet, or empty) → seed it with the local prefs we have
+        if (!profile || !profile.theme) {
+          await syncPrefsToCloud(user.id).catch(() => {});
+        }
+
+        if (!wasSignedIn) showToast('Preferences synced from your account', 'info');
       } catch {}
     }
-    const { renderAccountSection } = await import('./settings.js');
+
+    const { renderAccountSection, renderLikesSection } = await import('./settings.js');
     renderAccountSection();
+    renderLikesSection();
+  });
+
+  // Sync prefs whenever the page is hidden (catches changes that didn't trigger
+  // an explicit sync — e.g. system theme change, future settings additions).
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && currentUser) {
+      scheduleSyncPrefs(currentUser.id, 0);
+    }
   });
 
   // Flush session time on page hide

@@ -255,6 +255,28 @@
         </div>
       </div>
 
+      <!-- Your Likes (signed-in users) -->
+      <div class="settings-section" id="likes-section" hidden>
+        <div class="settings-section-header">
+          Your likes <span class="stats-count-badge" id="likes-count">0</span>
+        </div>
+        <div class="likes-toolbar">
+          <input
+            type="search"
+            class="input-field likes-search"
+            id="likes-search"
+            placeholder="Search your likes…"
+            aria-label="Search your liked articles"
+          />
+          <button class="btn-secondary likes-clear-btn" id="likes-clear-btn" type="button">
+            Clear all
+          </button>
+        </div>
+        <div id="likes-feed" class="likes-feed" aria-live="polite">
+          <!-- Rendered by settings.js -->
+        </div>
+      </div>
+
       <!-- Data -->
       <div class="settings-section">
         <div class="settings-section-header">Your Data</div>
@@ -357,18 +379,21 @@
     // Wire up the Wikipedia language selector separately from app.js
     // since it needs to reload the feed on change
     import { Storage } from './storage.js';
+    import { getCurrentUser, scheduleSyncPrefs } from './auth.js';
 
     const langSelect = document.getElementById('wiki-lang-select');
     if (langSelect) {
       const prefs = Storage.getPrefs();
       langSelect.value = prefs.wikiLang || 'en';
-      langSelect.addEventListener('change', () => {
+      langSelect.addEventListener('change', async () => {
         const newLang = langSelect.value;
         const oldLang = Storage.getPrefs().wikiLang || 'en';
         if (newLang !== oldLang) {
           Storage.setPrefs({ wikiLang: newLang });
           Storage.reset();
           window.reloadFeed?.();
+          const user = await getCurrentUser();
+          if (user) scheduleSyncPrefs(user.id);
         }
       });
     }

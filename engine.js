@@ -206,11 +206,11 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
   const searches = topics.map(topic => {
     const seeds = TOPIC_SEEDS[topic] || [topic];
     const query = seeds[Math.floor(Math.random() * seeds.length)];
-    return searchTitles(query, 8, lang).catch(() => []);
+    return searchTitles(query, 6, lang).catch(() => []);
   });
 
   const [randomTitles, ...searchResults] = await Promise.all([
-    fetchRandomTitles(16, lang).catch(() => []),
+    fetchRandomTitles(10, lang).catch(() => []),
     ...searches,
   ]);
   onProgress?.(11);
@@ -221,10 +221,10 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
    * extra random pages until we have a workable batch (or give up after 2 tries). */
   let unseen = [...pool].filter(t => !seen.has(t));
   let topUps = 0;
-  const TOPUP_MAX = 2;
+  const TOPUP_MAX = 1;
   while (unseen.length < minTargetSize && topUps < TOPUP_MAX) {
     topUps++;
-    const more = await fetchRandomTitles(20, lang).catch(() => []);
+    const more = await fetchRandomTitles(12, lang).catch(() => []);
     more.forEach(t => pool.add(t));
     unseen = [...pool].filter(t => !seen.has(t));
     onProgress?.(11 + Math.round((topUps / TOPUP_MAX) * 6));
@@ -275,7 +275,7 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
   if (diverse.length < 3) {
     try {
       onProgress?.(86);
-      const extraTitles = await fetchRandomTitles(8, lang);
+      const extraTitles = await fetchRandomTitles(6, lang);
       const extra = await fetchSummaryBatch(extraTitles, lang, {
         includeCategories: false,
         onChunkProgress: onProgress

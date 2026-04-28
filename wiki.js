@@ -1,9 +1,22 @@
-// wiki.js — Wikipedia API adapters with strict rate-limit safety
+// wiki.js — Wikipedia API adapters following the Wikimedia rate-limit best practices
+// https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits
 
 const TIMEOUT_MS  = 10000;
 const MAX_RETRIES = 2;
-const CONCURRENCY = 3; // Wikimedia best-practice: 3 concurrent requests max
+/** Wikimedia guideline: ≤ 3 concurrent requests. We run at 2 for extra headroom. */
+const CONCURRENCY = 2;
 const MIN_RETRY_AFTER_MS = 5000;
+/**
+ * Soft per-minute cap. Browser-origin unauthenticated bucket is 200/min; we stay
+ * comfortably under so even rapid scrolling can't burst over the limit.
+ *
+ * IMPORTANT: we deliberately do NOT send a custom `Api-User-Agent` header.
+ * Any non-safelisted request header on a cross-origin fetch triggers a CORS
+ * preflight OPTIONS, which doubles our request count against Wikimedia's
+ * per-IP rate limit. The browser's built-in User-Agent already puts us in the
+ * "Requests made from a web browser by an unauthenticated user" 200/min bucket.
+ */
+const REQUESTS_PER_MINUTE_CAP = 80;
 
 function baseUrl(lang = 'en') {
   return `https://${lang}.wikipedia.org`;
@@ -23,6 +36,26 @@ function makeLimiter(max) {
 }
 const limited = makeLimiter(CONCURRENCY);
 let globalBackoffUntil = 0;
+
+/** Sliding per-minute window to keep us well under the unauthenticated cap. */
+const _requestTimestamps = [];
+async function throttlePerMinute() {
+  // Loop in case multiple slots need to free up (the cap can be hit by
+  // concurrent callers racing through `await`s).
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const now = Date.now();
+    while (_requestTimestamps.length && now - _requestTimestamps[0] > 60000) {
+      _requestTimestamps.shift();
+    }
+    if (_requestTimestamps.length < REQUESTS_PER_MINUTE_CAP) {
+      _requestTimestamps.push(now);
+      return;
+    }
+    const waitMs = Math.max(100, 60000 - (now - _requestTimestamps[0]) + 50);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+}
 
 function parseRetryAfterMs(value) {
   if (!value) return MIN_RETRY_AFTER_MS;
@@ -59,6 +92,9 @@ async function fetchWithTimeout(url, retries = MAX_RETRIES) {
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
       await waitGlobalBackoff();
+      await throttlePerMinute();
+      // No custom headers — keeps requests CORS-"simple" so browsers don't
+      // send a preflight OPTIONS and double our request count.
       const res = await limited(() => fetch(url, {
         signal: controller.signal,
         credentials: 'omit',
@@ -70,10 +106,8 @@ async function fetchWithTimeout(url, retries = MAX_RETRIES) {
 
       if (res.status === 429 || res.status === 503) {
         const retryAfter = res.headers.get('Retry-After');
-        const wait = Math.min(
-          parseRetryAfterMs(retryAfter) * (attempt + 1),
-          120000,
-        );
+        // Respect server-provided Retry-After exactly (capped at 30s); don't compound per attempt.
+        const wait = Math.min(parseRetryAfterMs(retryAfter), 30000);
         globalBackoffUntil = Math.max(globalBackoffUntil, Date.now() + wait);
         await new Promise(r => setTimeout(r, wait));
         continue;
@@ -148,6 +182,23 @@ function getPersistedSummaryJson(lang, title) {
     return null;
   }
   return ent.json;
+}
+
+/** Returns up to `limit` cached normalized articles for a language — used during rate-limit fallback. */
+export function getCachedArticles(lang = 'en', limit = 12) {
+  const bundle = readSummaryDisk();
+  // Most-recently-added first (order is push-on-insert)
+  const keys = bundle.order.slice().reverse();
+  const out = [];
+  for (const k of keys) {
+    if (!k.startsWith(`${lang}\u0001`)) continue;
+    const ent = bundle.entries[k];
+    if (!ent) continue;
+    if (Date.now() - ent.ts > SUMMARY_DISK_TTL_MS) continue;
+    out.push(normalizeSummary(ent.json, lang));
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function setPersistedSummaryJson(lang, title, json) {

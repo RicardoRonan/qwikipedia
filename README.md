@@ -41,6 +41,39 @@ A personalized Wikipedia feed that learns what you like — built with vanilla H
   - `https://en.wikipedia.org/w/api.php`
 - **Wikimedia Featured Content API** — featured article of the day
 
+## Wikimedia API Rate-Limit Compliance
+
+ScrollWiki follows the [Wikimedia API rate-limit best practices](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)
+being phased in during 2026. The goal is to stay well inside the **200 requests/minute** bucket
+for anonymous browser traffic and avoid the much stricter **10/min** "unidentified" classification.
+
+**What we do:**
+
+| Practice | Implementation |
+|----------|----------------|
+| Browser User-Agent | We rely on the browser's built-in `User-Agent` header, which puts us in the "Requests made from a web browser by an unauthenticated user" 200/min bucket. We deliberately **don't** send a custom `Api-User-Agent` header because any non-safelisted header on a cross-origin `fetch` triggers a CORS preflight `OPTIONS` request — doubling the request count against Wikimedia's per-IP limit. |
+| Max 3 concurrent requests | `CONCURRENCY = 2` in `wiki.js` — always under the guideline |
+| Soft per-minute cap | `REQUESTS_PER_MINUTE_CAP = 80` sliding-window throttle in `wiki.js` — stays far under 200/min |
+| Respect `Retry-After` | `parseRetryAfterMs()` honors the server header, capped at 30s to avoid stale long backoffs |
+| Exponential fallback on network errors | 600ms, 1200ms, 1800ms between transient retries (max 2 attempts) |
+| Aggressive local caching | LRU of up to 140 REST summaries in `localStorage` (8-day TTL) — cached articles render instantly and are served silently during backoff |
+| No credentials | `credentials: 'omit'` on all Wikimedia requests |
+| Conservative batch sizes | 8 articles per load, 10-title random pool, 6-title topic search |
+| Background refresh | Cached-first rendering + silent background fetch; only first-run shows the % spinner |
+
+**Rate-limit cheat sheet (from the official policy):**
+
+| Client type | Limit |
+|-------------|-------|
+| Unidentified (IP only) | **10 req/min** |
+| Browser, unauthenticated | **200 req/min** |
+| User-Agent identified | **200 req/min** |
+| Authenticated, new user | **200 req/min** |
+| Authenticated, established editor | **2000 req/min** |
+| Authenticated with bot flag | Exempt |
+
+On a `429 Too Many Requests` or `503 Service Unavailable`, ScrollWiki pauses new requests until `Retry-After` elapses and keeps serving from the local cache — no silent failures, no request flood.
+
 ## How the Algorithm Works
 
 1. Each article is tagged with inferred topics (science, history, technology, arts, etc.)
@@ -51,9 +84,31 @@ A personalized Wikipedia feed that learns what you like — built with vanilla H
 6. Diversity rules cap repeat topics per batch
 7. Weights decay slightly each session to prevent the feed from getting too narrow
 
+## Cloud Sync (Supabase)
+
+When a user is signed in, the following preferences are kept in sync with their `profiles` row in Supabase:
+
+| Field | Column | Type |
+|-------|--------|------|
+| Theme (`light` / `dark` / `system`) | `theme` | `text` |
+| Text scale (80–130) | `text_scale` | `int4` |
+| Wikipedia language code | `wiki_lang` | `text` |
+| Topic interest weights | `topic_weights` | `jsonb` |
+| Wikipedia username (optional) | `wikipedia_username` | `text` |
+
+**How it works:**
+
+- On `onAuthStateChange` (sign-in / session refresh) → `pullPrefsFromCloud()` fetches the row, merges values into `localStorage`, and re-applies them (theme, text scale, language, interests).
+- Whenever the user changes a preference (theme button, text-scale slider, language selector, interest chip, like/dismiss interaction), `scheduleSyncPrefs()` queues a debounced upsert (700 ms quiet window).
+- On page hide, any pending change is flushed immediately so a user closing the tab never loses pref state.
+- Topic weights are merge-only: an empty cloud row never wipes locally chosen interests.
+- Brand-new accounts (no `profiles` row yet) are seeded with the user's local prefs on first sign-in.
+
+RLS policies on `profiles` ensure users can only read/upsert their own row (`auth.uid() = id`).
+
 ## Privacy
 
 - No tracking, no analytics, no ads
-- Recommendation data never leaves your device
-- If signed in: only theme + text scale preferences are saved to Supabase
-- Wikipedia API calls go directly from your browser to Wikipedia's servers
+- Article history (seen / liked / dismissed titles) **never leaves your device** — only the aggregated topic-weight vector is synced
+- All Wikipedia API calls go directly from your browser to Wikipedia's servers
+- If you're signed out, nothing is sent to Supabase

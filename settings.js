@@ -7,8 +7,9 @@ import {
   signOut,
   getProfile,
   upsertProfile,
-  syncPrefsToCloud,
+  scheduleSyncPrefs,
 } from './auth.js';
+import { fetchSummary } from './wiki.js';
 import { ICONS } from './icons.js';
 
 // Topic list mirrors the onboarding interest options
@@ -121,7 +122,7 @@ export function initSettings() {
 
 async function syncIfLoggedIn() {
   const user = await getCurrentUser();
-  if (user) syncPrefsToCloud(user.id).catch(() => {});
+  if (user) scheduleSyncPrefs(user.id);
 }
 
 // ===== Interests section =====
@@ -176,6 +177,8 @@ function renderInterestsSection() {
           clearTimeout(status._t);
           status._t = setTimeout(() => { status.textContent = ''; }, 2500);
         }
+
+        syncIfLoggedIn();
       });
 
       grid.appendChild(chip);
@@ -243,6 +246,7 @@ export async function renderAccountSection() {
     await signOut();
     showToast('Signed out', 'info');
     renderAccountSection();
+    renderLikesSection();
   });
 
   document.getElementById('save-wiki-username')?.addEventListener('click', async () => {
@@ -253,4 +257,220 @@ export async function renderAccountSection() {
       renderAccountSection();
     }
   });
+
+  // Render the likes feed once the user is confirmed signed in.
+  renderLikesSection();
+}
+
+// ===== Your Likes section =====
+
+const LIKES_PAGE_SIZE = 20;
+let _likesShown = LIKES_PAGE_SIZE;
+let _likesQuery = '';
+/** Cache of fetched summaries keyed by title — keeps re-renders snappy. */
+const _likesSummaryCache = new Map();
+/** In-flight fetch promises, deduped per title. */
+const _likesPending = new Map();
+
+function escapeHtml(s = '') {
+  return s.replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+/** Render the "Your likes" section — only visible when signed in. */
+export async function renderLikesSection() {
+  const section = document.getElementById('likes-section');
+  if (!section) return;
+
+  const user = await getCurrentUser();
+  if (!user) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  const lang = Storage.getPrefs().wikiLang || 'en';
+  const allTitles = Storage.getHistory().likedTitles || [];
+
+  // Apply search filter
+  const q = _likesQuery.trim().toLowerCase();
+  const filtered = q
+    ? allTitles.filter(t => t.toLowerCase().includes(q))
+    : allTitles;
+
+  const countEl = document.getElementById('likes-count');
+  if (countEl) countEl.textContent = String(allTitles.length);
+
+  const feedEl = document.getElementById('likes-feed');
+  if (!feedEl) return;
+
+  if (allTitles.length === 0) {
+    feedEl.innerHTML = `
+      <div class="likes-empty">
+        Articles you like in the feed will appear here. Tap the heart icon on any card to start your collection.
+      </div>
+    `;
+    return;
+  }
+
+  if (filtered.length === 0) {
+    feedEl.innerHTML = `
+      <div class="likes-empty">No likes match "${escapeHtml(_likesQuery)}".</div>
+    `;
+    return;
+  }
+
+  const visible = filtered.slice(0, _likesShown);
+
+  // Initial paint with placeholders for any uncached titles
+  feedEl.innerHTML = visible.map(title => renderLikeCardHtml(title, _likesSummaryCache.get(title), lang)).join('');
+
+  // Load missing summaries lazily and patch the DOM as they resolve
+  visible.forEach(title => {
+    if (_likesSummaryCache.has(title)) return;
+    if (_likesPending.has(title)) return;
+    const p = fetchSummary(title, lang)
+      .then(article => {
+        _likesSummaryCache.set(title, article);
+        const row = feedEl.querySelector(`[data-like-title="${cssEscape(title)}"]`);
+        if (row) row.outerHTML = renderLikeCardHtml(title, article, lang);
+      })
+      .catch(() => {
+        const row = feedEl.querySelector(`[data-like-title="${cssEscape(title)}"]`);
+        if (row) {
+          row.querySelector('.like-card-extract')?.classList.remove('likes-pending');
+          const ex = row.querySelector('.like-card-extract');
+          if (ex) ex.textContent = 'Couldn\'t load preview — open on Wikipedia.';
+        }
+      })
+      .finally(() => { _likesPending.delete(title); });
+    _likesPending.set(title, p);
+  });
+
+  // Render "Load more" if there are more matches than currently shown
+  if (filtered.length > _likesShown) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'likes-load-more';
+    btn.textContent = `Show ${Math.min(LIKES_PAGE_SIZE, filtered.length - _likesShown)} more`;
+    btn.addEventListener('click', () => {
+      _likesShown += LIKES_PAGE_SIZE;
+      renderLikesSection();
+    });
+    feedEl.appendChild(btn);
+  }
+}
+
+function cssEscape(value) {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return String(value).replace(/["\\\n]/g, c => '\\' + c);
+}
+
+function renderLikeCardHtml(title, article, lang) {
+  const safeTitle = escapeHtml(title);
+  const url = article?.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+  const display = article?.displayTitle || article?.title || title;
+  const image = article?.image;
+  const extract = article?.extract;
+
+  const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
+  const thumb = image
+    ? `<div class="like-card-thumb" style="background-image:url('${escapeHtml(image)}')" aria-hidden="true"></div>`
+    : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
+
+  const extractHtml = extract
+    ? `<p class="like-card-extract">${escapeHtml(extract)}</p>`
+    : `<p class="like-card-extract likes-pending">Loading preview…</p>`;
+
+  return `
+    <div class="like-card" data-like-title="${escapeHtml(title)}">
+      ${thumb}
+      <div class="like-card-body">
+        <a class="like-card-title" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(display)}</a>
+        ${extractHtml}
+        <div class="like-card-actions">
+          <a href="${escapeHtml(url)}" target="_blank" rel="noopener" aria-label="Open ${safeTitle} on Wikipedia">
+            ${ICONS.externalLink || ''} Open
+          </a>
+          <button type="button" class="like-unlike-btn" data-unlike-title="${safeTitle}" aria-label="Unlike ${safeTitle}">
+            ${ICONS.heartFilled || ''} Unlike
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/** Wire up the toolbar (search + clear all) and unlike clicks once at init. */
+function bindLikesEvents() {
+  const search = document.getElementById('likes-search');
+  if (search && !search.dataset.bound) {
+    search.dataset.bound = '1';
+    let t = null;
+    search.addEventListener('input', () => {
+      _likesQuery = search.value;
+      _likesShown = LIKES_PAGE_SIZE;
+      clearTimeout(t);
+      t = setTimeout(renderLikesSection, 120);
+    });
+  }
+
+  const clearBtn = document.getElementById('likes-clear-btn');
+  if (clearBtn && !clearBtn.dataset.bound) {
+    clearBtn.dataset.bound = '1';
+    clearBtn.addEventListener('click', async () => {
+      const all = Storage.getHistory().likedTitles || [];
+      if (!all.length) return;
+      if (!confirm(`Remove all ${all.length} liked article${all.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+      Storage.setHistory({ likedTitles: [] });
+      const user = await getCurrentUser();
+      if (user) scheduleSyncPrefs(user.id, 0);
+      _likesSummaryCache.clear();
+      _likesPending.clear();
+      _likesShown = LIKES_PAGE_SIZE;
+      _likesQuery = '';
+      if (search) search.value = '';
+      showToast('Cleared all liked articles', 'info');
+      renderLikesSection();
+    });
+  }
+
+  const feed = document.getElementById('likes-feed');
+  if (feed && !feed.dataset.bound) {
+    feed.dataset.bound = '1';
+    feed.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-unlike-title]');
+      if (!btn) return;
+      const title = btn.dataset.unlikeTitle;
+      const card = btn.closest('.like-card');
+
+      const h = Storage.getHistory();
+      h.likedTitles = (h.likedTitles || []).filter(t => t !== title);
+      Storage.setHistory(h);
+
+      const user = await getCurrentUser();
+      if (user) scheduleSyncPrefs(user.id);
+      showToast(`Unliked "${title}"`, 'info');
+
+      // Quick fade-out, then re-render
+      if (card) {
+        card.style.transition = 'opacity 180ms ease, transform 180ms ease';
+        card.style.opacity = '0';
+        card.style.transform = 'translateX(-12px)';
+        setTimeout(() => renderLikesSection(), 200);
+      } else {
+        renderLikesSection();
+      }
+    });
+  }
+}
+
+// Bind once at module load (DOM already exists by then via index.html)
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindLikesEvents, { once: true });
+  } else {
+    bindLikesEvents();
+  }
 }

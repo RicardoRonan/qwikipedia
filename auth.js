@@ -92,24 +92,77 @@ export async function upsertProfile(userId, fields) {
   } catch {}
 }
 
-// Sync local prefs to Supabase when user is logged in
+/**
+ * Sync local prefs (theme, text scale, language, topic interests) to Supabase.
+ * Debounced via the caller — this just performs a single upsert and never throws.
+ */
 export async function syncPrefsToCloud(userId) {
   const prefs = Storage.getPrefs();
+  const engine = Storage.getEngine();
+  const history = Storage.getHistory();
   await upsertProfile(userId, {
     theme: prefs.theme,
     text_scale: prefs.textScale,
+    wiki_lang: prefs.wikiLang,
+    topic_weights: engine.topicWeights || {},
+    // Cap at 300 to mirror the local cap and keep the row small
+    liked_titles: (history.likedTitles || []).slice(0, 300),
   });
 }
 
-// Pull remote prefs and apply locally
+/**
+ * Pull remote prefs from Supabase and merge into localStorage.
+ * Returns the raw profile row so callers can read additional fields if needed.
+ */
 export async function pullPrefsFromCloud(userId) {
   const profile = await getProfile(userId);
-  if (!profile) return;
-  const updates = {};
-  if (profile.theme) updates.theme = profile.theme;
-  if (profile.text_scale) updates.textScale = profile.text_scale;
-  if (Object.keys(updates).length) {
-    Storage.setPrefs(updates);
+  if (!profile) return null;
+
+  const prefUpdates = {};
+  if (profile.theme) prefUpdates.theme = profile.theme;
+  if (Number.isFinite(profile.text_scale)) prefUpdates.textScale = profile.text_scale;
+  if (profile.wiki_lang) prefUpdates.wikiLang = profile.wiki_lang;
+  if (Object.keys(prefUpdates).length) Storage.setPrefs(prefUpdates);
+
+  // Topic weights: only overwrite when the cloud has something meaningful;
+  // never wipe a user's local interests with an empty cloud row.
+  if (profile.topic_weights && typeof profile.topic_weights === 'object'
+      && Object.keys(profile.topic_weights).length > 0) {
+    Storage.setEngine({ topicWeights: profile.topic_weights });
   }
+
+  // Liked titles: union of local + cloud (preserves likes from either side),
+  // most-recent-first ordering taken from cloud where available.
+  if (Array.isArray(profile.liked_titles)) {
+    const local = Storage.getHistory().likedTitles || [];
+    const seen = new Set();
+    const merged = [];
+    [...profile.liked_titles, ...local].forEach(t => {
+      if (typeof t === 'string' && !seen.has(t)) {
+        seen.add(t);
+        merged.push(t);
+      }
+    });
+    Storage.setHistory({ likedTitles: merged.slice(0, 300) });
+  }
+
   return profile;
+}
+
+/**
+ * Debounced sync helper — call as often as you like; only one upsert fires
+ * per quiet window, regardless of how many preferences changed.
+ */
+let _syncTimer = null;
+let _pendingUserId = null;
+export function scheduleSyncPrefs(userId, delayMs = 700) {
+  if (!userId) return;
+  _pendingUserId = userId;
+  if (_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    _syncTimer = null;
+    const id = _pendingUserId;
+    _pendingUserId = null;
+    if (id) syncPrefsToCloud(id).catch(() => {});
+  }, delayMs);
 }
