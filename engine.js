@@ -1,0 +1,265 @@
+// engine.js — local recommendation engine
+
+import { Storage } from './storage.js';
+import {
+  fetchSummaryBatch,
+  fetchRandomTitles,
+  searchTitles,
+  fetchCategoryMembers,
+  fetchFeaturedToday,
+} from './wiki.js';
+
+// Topics mapped to seed search queries used for candidate generation
+const TOPIC_SEEDS = {
+  science:    ['science', 'physics', 'biology', 'chemistry', 'astronomy'],
+  history:    ['history', 'ancient history', 'world war', 'civilization'],
+  technology: ['technology', 'computer science', 'internet', 'artificial intelligence'],
+  arts:       ['art', 'music', 'painting', 'literature', 'film'],
+  geography:  ['geography', 'country', 'continent', 'ocean', 'mountain'],
+  people:     ['biography', 'inventor', 'scientist', 'leader', 'athlete'],
+  nature:     ['nature', 'animal', 'plant', 'ecology', 'wildlife'],
+  society:    ['culture', 'religion', 'politics', 'economics', 'philosophy'],
+  sports:     ['sport', 'football', 'olympics', 'basketball', 'tennis'],
+  food:       ['food', 'cuisine', 'cooking', 'nutrition', 'recipe'],
+};
+
+// Comprehensive mapping from Wikipedia category keywords → our topic buckets.
+// These match against the ACTUAL categories Wikipedia assigns to articles.
+const CATEGORY_TOPIC_MAP = {
+  science: [
+    'science', 'physics', 'chemistry', 'biology', 'astronomy', 'geology',
+    'botany', 'zoology', 'ecology', 'genetics', 'neuroscience', 'medicine',
+    'medical', 'pharmaceutical', 'scientific', 'mathematics', 'statistics',
+    'calculus', 'algebra', 'geometry', 'laboratory', 'research', 'clinical',
+    'biochemistry', 'microbiology', 'immunology', 'pathology', 'surgery',
+    'astrophysics', 'cosmology', 'optics', 'thermodynamics', 'quantum',
+  ],
+  history: [
+    'history', 'historical', 'ancient', 'medieval', 'war', 'empire',
+    'dynasty', 'civilization', 'archaeological', 'century', 'battle',
+    'revolution', 'colonial', 'prehistoric', 'heritage', 'antiquity',
+    'ottoman', 'roman', 'byzantine', 'mongol', 'napoleonic', 'victorian',
+    'cold war', 'world war', 'conquest', 'siege',
+  ],
+  technology: [
+    'technology', 'computing', 'software', 'hardware', 'internet',
+    'programming', 'engineering', 'robotics', 'electronics',
+    'telecommunications', 'computer', 'digital', 'artificial intelligence',
+    'machine learning', 'semiconductor', 'cybersecurity', 'aerospace',
+    'spacecraft', 'satellite', 'nuclear', 'electrical', 'mechanical',
+    'civil engineering', 'chemical engineering', 'nanotechnology',
+  ],
+  arts: [
+    'art', 'music', 'painting', 'sculpture', 'literature', 'film', 'cinema',
+    'theatre', 'dance', 'opera', 'novel', 'poetry', 'architecture', 'design',
+    'photography', 'animation', 'cartoon', 'comic', 'musician', 'artist',
+    'actor', 'director', 'composer', 'album', 'band', 'song', 'television',
+    'manga', 'anime', 'video game', 'playwright', 'fiction', 'drawing',
+  ],
+  geography: [
+    'populated places', 'cities', 'towns', 'villages', 'municipalities',
+    'districts', 'provinces', 'states', 'regions', 'countries', 'islands',
+    'rivers', 'lakes', 'mountains', 'oceans', 'continents', 'capitals',
+    'boroughs', 'counties', 'parishes', 'settlements', 'census',
+    'administrative divisions', 'geography of',
+  ],
+  people: [
+    'births', 'deaths', 'politicians', 'statesmen', 'presidents', 'kings',
+    'queens', 'monarchs', 'generals', 'admirals', 'philosophers',
+    'mathematicians', 'inventors', 'entrepreneurs', 'businesspeople',
+    'activists', 'journalists', 'authors', 'writers', 'poets', 'painters',
+    'academics', 'professors', 'diplomats', 'revolutionaries', 'explorers',
+  ],
+  nature: [
+    'species', 'genus', 'family', 'insect', 'bird', 'mammal', 'reptile',
+    'amphibian', 'fish', 'plant', 'flower', 'tree', 'fungus', 'bacteria',
+    'moth', 'butterfly', 'beetle', 'spider', 'wildlife', 'fauna', 'flora',
+    'taxonomy', 'lepidoptera', 'coleoptera', 'diptera', 'hymenoptera',
+    'animalia', 'plantae', 'chordata', 'arthropoda', 'mollusca',
+    'conservation', 'endangered', 'extinct', 'biosphere', 'habitat',
+  ],
+  society: [
+    'culture', 'religion', 'law', 'education', 'government', 'policy',
+    'rights', 'philosophy', 'ethics', 'economics', 'politics', 'parliament',
+    'organization', 'institution', 'foundation', 'nonprofit', 'charity',
+    'social', 'anthropology', 'sociology', 'theology', 'religious',
+    'church', 'mosque', 'temple', 'political party', 'military',
+  ],
+  sports: [
+    'sport', 'football', 'soccer', 'tennis', 'basketball', 'athletics',
+    'swimming', 'cycling', 'rugby', 'baseball', 'hockey', 'golf', 'olympic',
+    'championship', 'tournament', 'league', 'club', 'stadium',
+    'wrestler', 'boxer', 'cricket', 'volleyball', 'handball', 'rowing',
+    'gymnastics', 'martial arts', 'racing', 'formula one', 'motorsport',
+    'skiing', 'snowboarding', 'surfing', 'triathlon',
+  ],
+  food: [
+    'food', 'cuisine', 'dish', 'recipe', 'cooking', 'drink', 'beverage',
+    'restaurant', 'ingredient', 'spice', 'bread', 'meat', 'vegetable',
+    'fruit', 'dessert', 'wine', 'beer', 'cheese', 'pastry', 'sauce',
+    'condiment', 'nutrition', 'diet',
+  ],
+};
+
+const ALL_TOPICS = Object.keys(TOPIC_SEEDS);
+
+// Infer topics from Wikipedia categories (accurate, data-driven).
+// Falls back to a conservative title-only scan if no categories are available.
+export function inferTopics(article) {
+  const cats = article.categories || [];
+
+  if (cats.length > 0) {
+    // Primary: match against actual Wikipedia category strings
+    const matched = new Set();
+    for (const cat of cats) {
+      for (const [topic, keywords] of Object.entries(CATEGORY_TOPIC_MAP)) {
+        if (keywords.some(kw => cat.includes(kw))) {
+          matched.add(topic);
+        }
+      }
+    }
+    if (matched.size > 0) return [...matched];
+  }
+
+  // Fallback: conservative title-only keyword scan (never full extract)
+  const title = article.title.toLowerCase();
+  return ALL_TOPICS.filter(topic =>
+    TOPIC_SEEDS[topic].some(seed => title.includes(seed))
+  );
+}
+
+// Weight update constants
+const W_LIKE = 2;
+const W_DISLIKE = -3;
+const W_SKIP = -0.5;
+const W_DECAY = 0.95; // applied each session to avoid runaway bias
+
+export function recordInteraction(article, action) {
+  const engine = Storage.getEngine();
+  const topics = inferTopics(article);
+  const delta = action === 'like' ? W_LIKE : action === 'dislike' ? W_DISLIKE : W_SKIP;
+
+  const weights = { ...engine.topicWeights };
+  topics.forEach(t => {
+    weights[t] = (weights[t] || 0) + delta;
+  });
+
+  Storage.setEngine({ topicWeights: weights, sessionCount: (engine.sessionCount || 0) });
+
+  if (action === 'like') Storage.addLiked(article.title);
+  if (action === 'dislike') Storage.addDismissed(article.title);
+  if (action === 'skip') Storage.addSeen(article.title);
+}
+
+// Pick top N topics by weight; if none trained, return random selection
+function pickWeightedTopics(n = 3) {
+  const { topicWeights } = Storage.getEngine();
+  const entries = Object.entries(topicWeights).filter(([, v]) => v > 0);
+
+  if (entries.length === 0) {
+    // Shuffle all topics and return first n
+    return [...ALL_TOPICS].sort(() => Math.random() - 0.5).slice(0, n);
+  }
+
+  const sorted = entries.sort(([, a], [, b]) => b - a);
+  const total = sorted.reduce((s, [, v]) => s + v, 0);
+
+  // Weighted random pick
+  const chosen = new Set();
+  let attempts = 0;
+  while (chosen.size < Math.min(n, sorted.length) && attempts < 50) {
+    attempts++;
+    const rand = Math.random() * total;
+    let cum = 0;
+    for (const [topic, w] of sorted) {
+      cum += w;
+      if (rand <= cum) {
+        chosen.add(topic);
+        break;
+      }
+    }
+  }
+  return [...chosen];
+}
+
+// Apply session decay to prevent weights from dominating forever
+export function applyDecay() {
+  const engine = Storage.getEngine();
+  const weights = { ...engine.topicWeights };
+  Object.keys(weights).forEach(t => {
+    weights[t] = weights[t] * W_DECAY;
+    if (Math.abs(weights[t]) < 0.1) delete weights[t];
+  });
+  Storage.setEngine({ topicWeights: weights });
+}
+
+// Build a pool of candidate article titles — all network calls run in parallel
+async function buildCandidatePool(lang = 'en') {
+  const history = Storage.getHistory();
+  const seen = new Set([...history.seenTitles, ...history.dismissedTitles, ...history.likedTitles]);
+
+  // Keep candidate generation conservative to avoid bursty API traffic.
+  const topics = pickWeightedTopics(3);
+  const searches = topics.map(topic => {
+    const seeds = TOPIC_SEEDS[topic] || [topic];
+    const query = seeds[Math.floor(Math.random() * seeds.length)];
+    return searchTitles(query, 8, lang).catch(() => []);
+  });
+
+  const [randomTitles, ...searchResults] = await Promise.all([
+    fetchRandomTitles(12, lang).catch(() => []),
+    ...searches,
+  ]);
+
+  const pool = new Set([...randomTitles, ...searchResults.flat()]);
+  return [...pool].filter(t => !seen.has(t));
+}
+
+// Fetch next batch of feed articles
+export async function fetchFeedBatch(lang = 'en', batchSize = 8) {
+  const candidates = await buildCandidatePool(lang);
+
+  // Shuffle — only fetch summaries for what we realistically need (keeps request count low)
+  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 8);
+
+  const articles = await fetchSummaryBatch(shuffled, lang);
+
+  // Enforce topic diversity: cap 2 per topic per batch
+  const topicCounts = {};
+  const diverse = [];
+  for (const article of articles) {
+    const topics = inferTopics(article);
+    const dominant = topics[0] || 'other';
+    topicCounts[dominant] = (topicCounts[dominant] || 0) + 1;
+    if (topicCounts[dominant] <= 3) {
+      diverse.push(article);
+    }
+    if (diverse.length >= batchSize) break;
+  }
+
+  // Pad with random if not enough
+  if (diverse.length < 3) {
+    try {
+      const extraTitles = await fetchRandomTitles(8, lang);
+      const extra = await fetchSummaryBatch(extraTitles, lang);
+      extra.slice(0, batchSize - diverse.length).forEach(a => {
+        diverse.push(a);
+      });
+    } catch {}
+  }
+
+  return diverse;
+}
+
+// Fetch a single featured article (for a "featured today" card)
+export async function getFeaturedCard(lang = 'en') {
+  const history = Storage.getHistory();
+  const seen = new Set([...history.seenTitles, ...history.dismissedTitles]);
+  try {
+    const featured = await fetchFeaturedToday(lang);
+    if (featured && !seen.has(featured.title)) {
+      return featured;
+    }
+  } catch {}
+  return null;
+}

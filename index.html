@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Qwikipedia — a personalized Wikipedia feed that learns what you like." />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)" />
+  <title>Qwikipedia</title>
+  <link rel="icon" type="image/png" href="Qwikipedia%20logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- GSAP for animations -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js" defer></script>
+  <!-- Supabase JS SDK (loads async; auth gracefully skipped if blocked) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" defer></script>
+</head>
+<body>
+
+  <!-- ===== Sidebar / Bottom Nav ===== -->
+  <nav id="nav" role="navigation" aria-label="Main navigation">
+
+    <!-- Logo (desktop sidebar only) -->
+    <a id="nav-logo" href="#" data-page="feed-page" aria-label="Qwikipedia home">
+      <img src="Qwikipedia%20logo.png" class="logo-img" alt="Qwikipedia" />
+    </a>
+
+    <!-- Main nav items -->
+    <div id="nav-items">
+      <button class="nav-btn" data-page="feed-page" aria-label="Feed">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <span class="nav-tooltip">Feed</span>
+      </button>
+
+      <button class="nav-btn" data-page="stats-page" aria-label="Statistics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/>
+          <line x1="6" x2="6" y1="20" y2="14"/>
+        </svg>
+        <span class="nav-tooltip">Stats</span>
+      </button>
+
+      <button class="nav-btn" data-page="settings-page" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span class="nav-tooltip">Settings</span>
+      </button>
+    </div>
+
+    <!-- User / sign-in (pushed to bottom on desktop) -->
+    <div id="nav-user">
+      <span id="nav-user-name" style="display:none;" aria-live="polite"></span>
+      <button class="nav-btn" id="nav-login-btn" aria-label="Sign in">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span class="nav-tooltip">Sign in</span>
+      </button>
+    </div>
+
+  </nav>
+
+  <!-- ===== Onboarding Modal ===== -->
+  <div id="onboarding-overlay" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+    <div id="onboarding-modal">
+
+      <!-- Step 1: Welcome -->
+      <div class="onboarding-step active" id="step-1">
+        <img src="Qwikipedia%20logo.png" class="onboarding-logo-img" alt="Qwikipedia" />
+        <h1 id="onboarding-title">Wikipedia, but it learns what you like.</h1>
+        <p class="onboarding-body">
+          Qwikipedia shows you a personalised feed of Wikipedia articles that adapts to your interests as you interact with it.
+          The algorithm runs entirely on your device, nothing you read is ever sent to a server.
+        </p>
+        <p class="onboarding-inspiration">
+          Inspired by <a href="https://xikipedia.org" target="_blank" rel="noopener">Xikipedia</a> — a clever project
+          by rebane2001. I loved the idea and built Qwikipedia: my own version with a cleaner design,
+          proper accounts, multi-language support, and a few extra features I thought were missing.
+        </p>
+        <div class="onboarding-features">
+          <div class="onboarding-feature">
+            <span class="onboarding-feature-icon" data-feature-icon="brain"></span>
+            <div>
+              <strong>Learns your taste</strong>
+              <span>Like and dismiss articles to shape your feed over time</span>
+            </div>
+          </div>
+          <div class="onboarding-feature">
+            <span class="onboarding-feature-icon" data-feature-icon="shieldCheck"></span>
+            <div>
+              <strong>Private by default</strong>
+              <span>All recommendation data stays on your device</span>
+            </div>
+          </div>
+          <div class="onboarding-feature">
+            <span class="onboarding-feature-icon" data-feature-icon="globe"></span>
+            <div>
+              <strong>Multiple languages</strong>
+              <span>Switch Wikipedia languages anytime in settings</span>
+            </div>
+          </div>
+        </div>
+        <button class="btn-primary onboarding-next" id="step-1-next" style="width:100%;margin-top:8px;">
+          Pick your interests →
+        </button>
+      </div>
+
+      <!-- Step 2: Interests -->
+      <div class="onboarding-step" id="step-2">
+        <h2 class="onboarding-step-title">What are you into?</h2>
+        <p class="onboarding-step-sub">Pick a few topics to seed your feed. You can always change this later by interacting with articles.</p>
+        <div id="interest-grid" role="group" aria-label="Interest topics"></div>
+        <button class="btn-primary onboarding-next" id="step-2-next" style="width:100%;margin-top:20px;" disabled>
+          Start reading
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== Pull-to-refresh indicator ===== -->
+  <div id="ptr-indicator" aria-hidden="true">
+    <span class="ptr-spinner-wrap"></span>
+    <span class="ptr-label">Pull to refresh</span>
+  </div>
+
+  <!-- ===== Main Content ===== -->
+  <main id="app">
+
+    <!-- ===== Feed Page ===== -->
+    <section id="feed-page" class="page active" aria-label="Article feed">
+      <div id="feed-loading-hint" aria-live="polite" style="display:none;">
+        <svg class="loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
+        </svg>
+        <span>Loading data</span>
+      </div>
+      <div id="feed-cards" aria-live="polite" aria-label="Feed articles"></div>
+      <button id="load-more-btn" aria-label="Load more articles">Load more articles</button>
+    </section>
+
+    <!-- ===== Stats Page ===== -->
+    <section id="stats-page" class="page" aria-label="Statistics">
+      <div class="settings-page-header">
+        <h1>Statistics</h1>
+        <p>How you've been using Qwikipedia</p>
+      </div>
+      <div id="stats-content"></div>
+    </section>
+
+    <!-- ===== Settings Page ===== -->
+    <section id="settings-page" class="page" aria-label="Settings">
+      <div class="settings-page-header">
+        <h1>Settings</h1>
+        <p>Preferences saved on your device</p>
+      </div>
+
+      <!-- Appearance -->
+      <div class="settings-section">
+        <div class="settings-section-header">Appearance</div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Theme</strong>
+            <span>Choose light, dark, or follow your system</span>
+          </div>
+          <div class="theme-toggle-group" role="group" aria-label="Theme selection">
+            <button class="theme-btn" data-theme="light" aria-pressed="false">Light</button>
+            <button class="theme-btn" data-theme="dark" aria-pressed="false">Dark</button>
+            <button class="theme-btn" data-theme="system" aria-pressed="false">System</button>
+          </div>
+        </div>
+
+        <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:12px;">
+          <div class="settings-row-label">
+            <strong>Text size</strong>
+            <span>Adjust the size of all text</span>
+          </div>
+          <div class="slider-wrapper">
+            <div class="slider-row">
+              <span style="font-size:var(--fs-xs);color:var(--text-muted);">A</span>
+              <input
+                type="range"
+                id="text-scale-slider"
+                min="80"
+                max="130"
+                step="5"
+                value="100"
+                aria-label="Text size percentage"
+              />
+              <span style="font-size:var(--fs-lg);color:var(--text-muted);">A</span>
+              <span id="text-scale-label" aria-live="polite">100%</span>
+            </div>
+            <p class="slider-preview">The quick brown fox jumps over the lazy dog.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wikipedia -->
+      <div class="settings-section">
+        <div class="settings-section-header">Wikipedia</div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Language</strong>
+            <span>Which Wikipedia to fetch articles from</span>
+          </div>
+          <select class="input-field" id="wiki-lang-select" style="max-width:160px;" aria-label="Wikipedia language">
+            <option value="en">English</option>
+            <option value="simple">Simple English</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+            <option value="es">Español</option>
+            <option value="pt">Português</option>
+            <option value="it">Italiano</option>
+            <option value="nl">Nederlands</option>
+            <option value="ru">Русский</option>
+            <option value="ja">日本語</option>
+            <option value="zh">中文</option>
+          </select>
+        </div>
+        <p class="settings-info-text">
+          Changing language clears your local recommendation history, since topic weights are language-specific.
+        </p>
+      </div>
+
+      <!-- Interests -->
+      <div class="settings-section">
+        <div class="settings-section-header">Interests</div>
+        <p class="settings-info-text" style="margin-bottom:14px;">
+          Toggle topics on or off to tune your feed. Active topics get a boost in recommendations.
+        </p>
+        <div id="interests-grid" role="group" aria-label="Manage interests"></div>
+        <p class="settings-info-text" style="margin-top:12px;" id="interests-status" aria-live="polite"></p>
+      </div>
+
+      <!-- Account -->
+      <div class="settings-section">
+        <div class="settings-section-header">Account</div>
+        <div id="account-section">
+          <!-- Rendered by settings.js -->
+          <div class="settings-row">
+            <div class="settings-row-label">
+              <strong>Loading…</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data -->
+      <div class="settings-section">
+        <div class="settings-section-header">Your Data</div>
+        <p class="settings-info-text">
+          Your recommendation history and preferences are stored only in your browser's local storage.
+          No article reading data is sent anywhere unless you are signed in, in which case only your
+          theme and text size preferences are synced.
+        </p>
+        <div class="btn-row">
+          <button class="btn-secondary" id="reset-algo-btn">Reset algorithm</button>
+          <button class="btn-danger" id="clear-all-btn">Clear all data</button>
+        </div>
+      </div>
+
+      <!-- About -->
+      <div class="settings-section">
+        <div class="settings-section-header">About</div>
+        <p class="settings-info-text">
+          <strong>Qwikipedia</strong> shows you a personalised feed of Wikipedia articles.
+          The recommendation algorithm runs locally — no data about what you read is sent to any server.
+          Content is sourced from the
+          <a href="https://en.wikipedia.org/api/rest_v1/" target="_blank" rel="noopener">Wikimedia REST API</a>
+          and the
+          <a href="https://www.mediawiki.org/wiki/API:Main_page" target="_blank" rel="noopener">MediaWiki Action API</a>,
+          both freely available under
+          <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>.
+        </p>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- ===== Auth Modal ===== -->
+  <div id="auth-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div id="auth-modal">
+      <button id="auth-modal-close" aria-label="Close sign in modal">✕</button>
+      <h2 id="auth-modal-title">Sign in</h2>
+      <p id="auth-modal-subtitle">Sync your preferences across devices</p>
+
+      <form class="auth-form" id="auth-form" data-mode="signin" novalidate>
+        <div class="auth-error" id="auth-error" role="alert"></div>
+
+        <div class="input-group">
+          <label class="input-label" for="auth-email">Email</label>
+          <input
+            class="input-field"
+            id="auth-email"
+            type="email"
+            placeholder="you@example.com"
+            autocomplete="email"
+            required
+          />
+        </div>
+
+        <div class="input-group">
+          <label class="input-label" for="auth-password">Password</label>
+          <input
+            class="input-field"
+            id="auth-password"
+            type="password"
+            placeholder="••••••••"
+            autocomplete="current-password"
+            required
+            minlength="6"
+          />
+        </div>
+
+        <button class="btn-primary" id="auth-submit-btn" type="submit" style="width:100%">Sign in</button>
+      </form>
+
+      <p class="auth-switch">
+        <span id="auth-switch-text">Don't have an account?</span>
+        <a id="auth-switch-link" role="button" tabindex="0">Sign up</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- ===== Image Lightbox ===== -->
+  <div id="lightbox" aria-modal="true" role="dialog" aria-label="Image viewer">
+    <button id="lightbox-close" aria-label="Close image viewer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+    <div id="lightbox-inner">
+      <img id="lightbox-img" src="" alt="" />
+    </div>
+    <div id="lightbox-toolbar">
+      <span id="lightbox-caption"></span>
+      <button id="lightbox-download" aria-label="Download image">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+        Download
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== Toast Container ===== -->
+  <div id="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- ===== App Script ===== -->
+  <script type="module">
+    // Wire up the Wikipedia language selector separately from app.js
+    // since it needs to reload the feed on change
+    import { Storage } from './storage.js';
+
+    const langSelect = document.getElementById('wiki-lang-select');
+    if (langSelect) {
+      const prefs = Storage.getPrefs();
+      langSelect.value = prefs.wikiLang || 'en';
+      langSelect.addEventListener('change', () => {
+        const newLang = langSelect.value;
+        const oldLang = Storage.getPrefs().wikiLang || 'en';
+        if (newLang !== oldLang) {
+          Storage.setPrefs({ wikiLang: newLang });
+          Storage.reset();
+          window.reloadFeed?.();
+        }
+      });
+    }
+  </script>
+  <script type="module" src="app.js"></script>
+
+</body>
+</html>
