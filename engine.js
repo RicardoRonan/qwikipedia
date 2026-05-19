@@ -278,12 +278,21 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
   // Enforce topic diversity when we can infer topics (categories or title seeds).
   // Without categories, inferTopics is often [] for every title — they would all
   // bucket as "other" and wrongly cap the batch at 3 articles.
+  // Also filter by the user's selected interests: if the user has explicitly
+  // chosen interests, only show articles whose inferred topics match at least one.
+  const selectedInterests = new Set((Storage.getPrefs().interests || []).map(normalizeTopic).filter(Boolean));
+  const hasSelectedInterests = selectedInterests.size > 0;
   const topicCounts = {};
   const diverse = [];
   for (const article of articles) {
     const topics = inferTopics(article);
     if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
       console.debug('[feed] article topics', { title: article.title, categories: article.categories || [], topics });
+    }
+    // If user has selected interests, skip articles whose topics don't match any selected interest
+    if (hasSelectedInterests && topics.length > 0) {
+      const matchesSelected = topics.some(t => selectedInterests.has(normalizeTopic(t)));
+      if (!matchesSelected) continue;
     }
     if (topics.length === 0) {
       diverse.push(article);
@@ -322,7 +331,7 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
 // Fetch a single featured article (for a "featured today" card)
 export async function getFeaturedCard(lang = 'en') {
   const history = Storage.getHistory();
-  const seen = new Set([...history.seenTitles, ...history.dismissedTitles]);
+  const seen = new Set([...history.seenTitles, ...history.dismissedTitles, ...(history.likedTitles || [])]);
   try {
     const featured = await fetchFeaturedToday(lang);
     if (featured && !seen.has(featured.title)) {

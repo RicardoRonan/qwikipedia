@@ -24,6 +24,8 @@ const DEFAULT_HISTORY = {
   likedArticles: [],
   dismissedTitles: [],
   seenTitles: [],
+  savedTitles: [],
+  savedArticles: [],
 };
 
 const DEFAULT_STATS = {
@@ -125,6 +127,37 @@ export const Storage = {
       h.dismissedTitles = [title, ...h.dismissedTitles].slice(0, 300);
       _write(KEYS.HISTORY, h);
     }
+  },
+
+  addSaved(title) {
+    const h = this.getHistory();
+    if (!h.savedTitles.includes(title)) {
+      h.savedTitles = [title, ...h.savedTitles].slice(0, 300);
+      _write(KEYS.HISTORY, h);
+    }
+  },
+
+  setSavedArticle(article) {
+    if (!article?.title) return;
+    const h = this.getHistory();
+    const next = [article, ...(h.savedArticles || []).filter(a => a?.title !== article.title)];
+    h.savedArticles = next.slice(0, 300);
+    if (!h.savedTitles.includes(article.title)) {
+      h.savedTitles = [article.title, ...h.savedTitles].slice(0, 300);
+    }
+    _write(KEYS.HISTORY, h);
+  },
+
+  removeSaved(title) {
+    const h = this.getHistory();
+    h.savedTitles = (h.savedTitles || []).filter(t => t !== title);
+    h.savedArticles = (h.savedArticles || []).filter(a => a?.title !== title);
+    _write(KEYS.HISTORY, h);
+  },
+
+  isSaved(title) {
+    const h = this.getHistory();
+    return (h.savedTitles || []).includes(title);
   },
 
   isSeen(title) {

@@ -10,6 +10,7 @@ export function usePullToRefresh({
 
   let startY = 0;
   let pulling = false;
+  let startTime = 0;
   let dy = 0;
   const label = indicator.querySelector('.ptr-label');
   const spinner = indicator.querySelector('svg');
@@ -31,26 +32,38 @@ export function usePullToRefresh({
   };
 
   const onStart = (e) => {
-    if (!canStart() || isLoading()) return;
+    if (isLoading()) return;
+    if (!canStart()) return;
     startY = e.touches[0].clientY;
+    startTime = Date.now();
     dy = 0;
     pulling = true;
+    indicator.style.transition = 'none';
   };
 
   const onMove = (e) => {
     if (!pulling) return;
     dy = e.touches[0].clientY - startY;
-    if (dy <= 0) return;
+    if (dy <= 0) {
+      dy = 0;
+      return;
+    }
+    e.preventDefault();
     setIndicator(dy);
-    if (dy > 6) e.preventDefault();
   };
 
-  const onEnd = async () => {
+  const onEnd = async (e) => {
     if (!pulling) return;
     pulling = false;
-    const shouldRefresh = dy >= threshold && !isLoading();
+    const elapsed = Date.now() - startTime;
+    const velocity = elapsed > 0 ? dy / elapsed : 0;
+    const shouldRefresh = (dy >= threshold || (dy > threshold * 0.5 && velocity > 0.5)) && !isLoading();
     resetIndicator();
-    if (shouldRefresh) await onRefresh();
+    if (shouldRefresh) {
+      try {
+        await onRefresh();
+      } catch {}
+    }
   };
 
   container.addEventListener('touchstart', onStart, { passive: true });

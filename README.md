@@ -1,4 +1,4 @@
-# ScrollWiki
+# Qwikipedia
 
 A personalized Wikipedia feed that learns what you like — built with vanilla HTML, CSS, and JavaScript.
 
@@ -43,7 +43,7 @@ A personalized Wikipedia feed that learns what you like — built with vanilla H
 
 ## Wikimedia API Rate-Limit Compliance
 
-ScrollWiki follows the [Wikimedia API rate-limit best practices](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)
+Qwikipedia follows the [Wikimedia API rate-limit best practices](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)
 being phased in during 2026. The goal is to stay well inside the **200 requests/minute** bucket
 for anonymous browser traffic and avoid the much stricter **10/min** "unidentified" classification.
 
@@ -72,7 +72,7 @@ for anonymous browser traffic and avoid the much stricter **10/min** "unidentifi
 | Authenticated, established editor | **2000 req/min** |
 | Authenticated with bot flag | Exempt |
 
-On a `429 Too Many Requests` or `503 Service Unavailable`, ScrollWiki pauses new requests until `Retry-After` elapses and keeps serving from the local cache — no silent failures, no request flood.
+On a `429 Too Many Requests` or `503 Service Unavailable`, Qwikipedia pauses new requests until `Retry-After` elapses and keeps serving from the local cache — no silent failures, no request flood.
 
 ## How the Algorithm Works
 

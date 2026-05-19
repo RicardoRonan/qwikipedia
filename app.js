@@ -5,7 +5,7 @@ import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay, inferTo
 import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles } from './wiki.js';
 import { applyTheme, applyTextScale, initSettings } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
-import { showToast } from './toast.js';
+import { showToast, showActionToast } from './toast.js';
 import { ICONS } from './icons.js';
 import { cleanWikipediaText } from './text-utils.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
@@ -61,6 +61,7 @@ function createCard(article, featured = false) {
   el.className = 'card';
   el.dataset.title = article.title;
   const isLiked = Storage.isLiked(article.title);
+  const isSaved = Storage.isSaved(article.title);
 
   const lang = Storage.getPrefs().wikiLang || 'en';
   const displayTitleRaw = article.displayTitle || article.title || '';
@@ -73,6 +74,10 @@ function createCard(article, featured = false) {
     ? `<div class="card-featured-badge">${ICONS.arrowRight} Today's featured article</div>`
     : '';
 
+  // YouTube search URL from article title
+  const youtubeQuery = encodeURIComponent(`${cleanWikipediaText(displayTitleRaw)} wikipedia summary`);
+  const youtubeUrl = `https://www.youtube.com/results?search_query=${youtubeQuery}`;
+
   el.innerHTML = `
     <div class="card-body">
       ${featuredBadge}
@@ -84,15 +89,22 @@ function createCard(article, featured = false) {
           ${ICONS.externalLink} wikipedia.org
         </a>
         <div class="card-icon-group">
-          <button class="card-icon-btn btn-dislike" aria-label="Not interested">${ICONS.x}</button>
+          <button class="card-icon-btn btn-save ${isSaved ? 'saved' : ''}" aria-label="${isSaved ? 'Remove from saved' : 'Save for later'}">${isSaved ? ICONS.bookmarkFilled : ICONS.bookmark}</button>
           <button class="card-icon-btn btn-like ${isLiked ? 'liked' : ''}" aria-label="Like this article">${isLiked ? ICONS.heartFilled : ICONS.heart}</button>
+          <button class="card-icon-btn btn-dislike" aria-label="Not interested">${ICONS.x}</button>
         </div>
+      </div>
+      <div class="card-youtube-row">
+        <a class="card-youtube-link" href="${escapeAttr(youtubeUrl)}" target="_blank" rel="noopener" aria-label="Watch related videos on YouTube">
+          ${ICONS.youtube || '▶'} Watch related videos
+        </a>
       </div>
     </div>
   `;
 
   const likeBtn = el.querySelector('.btn-like');
   const dislikeBtn = el.querySelector('.btn-dislike');
+  const saveBtn = el.querySelector('.btn-save');
   const extractEl = el.querySelector('.card-extract');
 
   likeBtn.addEventListener('click', (e) => {
@@ -103,6 +115,11 @@ function createCard(article, featured = false) {
   dislikeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     animateDismiss(el, article);
+  });
+
+  saveBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    animateSave(el, saveBtn, article);
   });
 
   setupExtractExpansion(el, extractEl);
@@ -221,22 +238,93 @@ function animateLike(cardEl, likeBtn, article) {
   }
 }
 
+const _undoQueue = new Map();
+
 function animateDismiss(cardEl, article) {
   const g = gsap();
-  recordInteraction(article, 'dislike');
-  Storage.incrementStat('totalDismissed');
-  _sessionDismissed++;
-  updateNavStats();
-  if (currentUser) scheduleSyncPrefs(currentUser.id);
+  // Save the card HTML and article data for potential undo
+  const articleTitle = article.title;
+  const cardHtml = cardEl.outerHTML;
+
+  const doRemove = () => {
+    recordInteraction(article, 'dislike');
+    Storage.incrementStat('totalDismissed');
+    _sessionDismissed++;
+    updateNavStats();
+    if (currentUser) scheduleSyncPrefs(currentUser.id);
+    cardEl.remove();
+    _undoQueue.delete(articleTitle);
+  };
+
+  const undoRemove = () => {
+    // Remove the dismissed article from history (undo the weight changes)
+    const engine = Storage.getEngine();
+    const topics = inferTopics(article);
+    const weights = { ...engine.topicWeights };
+    topics.forEach(t => {
+      weights[t] = (weights[t] || 0) + 3; // reverse the -3 dislike
+    });
+    Storage.setEngine({ topicWeights: weights, sessionCount: (engine.sessionCount || 0) });
+    // Remove from dismissed titles
+    const history = Storage.getHistory();
+    history.dismissedTitles = (history.dismissedTitles || []).filter(t => t !== articleTitle);
+    Storage.setHistory({ dismissedTitles: history.dismissedTitles });
+    // Restore the card
+    if (cardEl.parentNode) {
+      cardEl.style.display = '';
+      cardEl.style.opacity = '';
+      cardEl.style.transform = '';
+    } else {
+      const container = document.getElementById('feed-cards');
+      if (container) container.insertBefore(cardEl, container.firstChild);
+    }
+    _undoQueue.delete(articleTitle);
+    if (currentUser) scheduleSyncPrefs(currentUser.id);
+  };
+
+  _undoQueue.set(articleTitle, { article, cardHtml, undoRemove });
+
+  // Record as seen (not dismissed yet) during the undo window
+  Storage.addSeen(articleTitle);
 
   if (g) {
     g.to(cardEl, {
       opacity: 0, x: -20, duration: 0.22, ease: 'power2.in',
-      onComplete: () => cardEl.remove(),
+      onComplete: () => {
+        cardEl.style.display = 'none';
+        showActionToast('Article dismissed', 'Undo', undoRemove);
+      },
     });
   } else {
-    cardEl.remove();
+    cardEl.style.display = 'none';
+    showActionToast('Article dismissed', 'Undo', undoRemove);
   }
+}
+
+function animateSave(cardEl, saveBtn, article) {
+  const alreadySaved = Storage.isSaved(article.title);
+  if (alreadySaved) {
+    Storage.removeSaved(article.title);
+    saveBtn.innerHTML = ICONS.bookmark;
+    saveBtn.classList.remove('saved');
+    saveBtn.setAttribute('aria-label', 'Save for later');
+    showToast('Removed from saved', 'info');
+  } else {
+    Storage.addSaved(article.title);
+    Storage.setSavedArticle({
+      title: article.title,
+      displayTitle: cleanWikipediaText(article.displayTitle || article.title),
+      extract: cleanWikipediaText(article.extract || ''),
+      image: article.image || null,
+      url: article.url || null,
+      lang: article.lang || 'en',
+    });
+    saveBtn.innerHTML = ICONS.bookmarkFilled;
+    saveBtn.classList.add('saved');
+    saveBtn.setAttribute('aria-label', 'Remove from saved');
+    showToast('Saved for later', 'success');
+  }
+  if (currentUser) scheduleSyncPrefs(currentUser.id);
 }
 
 // ===== Feed loading =====
@@ -353,10 +441,12 @@ function restoreFeedSession(container) {
       } catch {}
       return false;
     }
+    const likedTitles = new Set(Storage.getHistory().likedTitles || []);
     const frag = document.createDocumentFragment();
     const added = new Set();
     parsed.articles.forEach(article => {
       if (!article?.title || added.has(article.title)) return;
+      if (likedTitles.has(article.title)) return;
       added.add(article.title);
       frag.appendChild(createCard(article));
     });
@@ -371,8 +461,11 @@ function restoreFeedSession(container) {
 
 function appendUniqueArticles(container, articles = []) {
   const onScreen = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
+  const likedTitles = new Set(Storage.getHistory().likedTitles || []);
   articles.forEach(a => {
     if (!a?.title || onScreen.has(a.title)) return;
+    // Exclude liked articles from the main feed
+    if (likedTitles.has(a.title)) return;
     onScreen.add(a.title);
     Storage.addSeen(a.title);
     container.appendChild(createCard(a));
@@ -985,7 +1078,7 @@ function initLightbox() {
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      a.download = `scrollwiki-image.${ext}`;
+      a.download = `qwikipedia-image.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -1305,6 +1398,75 @@ function renderStatsPage() {
   }
 }
 
+// ===== Saved page =====
+
+function renderSavedPage() {
+  const container = document.getElementById('saved-content');
+  if (!container) return;
+  const { savedTitles, savedArticles } = Storage.getHistory();
+  if (!savedTitles.length) {
+    container.innerHTML = `
+      <div class="state-box">
+        <p>No saved articles yet. Tap the bookmark icon on any card to save it here.</p>
+      </div>
+    `;
+    return;
+  }
+  const lang = Storage.getPrefs().wikiLang || 'en';
+  container.innerHTML = `
+    <div class="likes-toolbar" style="padding:12px 16px;">
+      <span style="font-size:var(--fs-sm);color:var(--muted-foreground);">${savedTitles.length} saved</span>
+      <button class="btn-secondary likes-clear-btn" id="saved-clear-btn" type="button">Clear all</button>
+    </div>
+    <div class="likes-feed" id="saved-feed">
+      ${savedTitles.slice(0, 50).map(title => {
+        const article = savedArticles.find(a => a?.title === title);
+        return renderSavedCardHtml(title, article, lang);
+      }).join('')}
+    </div>
+  `;
+  document.getElementById('saved-clear-btn')?.addEventListener('click', async () => {
+    if (!confirm('Remove all saved articles?')) return;
+    const h = Storage.getHistory();
+    Storage.setHistory({ savedTitles: [], savedArticles: [] });
+    showToast('Cleared all saved articles', 'info');
+    renderSavedPage();
+  });
+  document.getElementById('saved-feed')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-unsave-title]');
+    if (!btn) return;
+    const title = btn.dataset.unsaveTitle;
+    Storage.removeSaved(title);
+    showToast('Removed from saved', 'info');
+    renderSavedPage();
+  });
+}
+
+function renderSavedCardHtml(title, article, lang) {
+  const safeTitle = escapeHtml(title);
+  const url = article?.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+  const display = article?.displayTitle || article?.title || title;
+  const image = article?.image;
+  const extract = article?.extract;
+  const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
+  const thumb = image
+    ? `<div class="like-card-thumb" style="background-image:url('${escapeHtml(image)}')" aria-hidden="true"></div>`
+    : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
+  return `
+    <div class="like-card">
+      ${thumb}
+      <div class="like-card-body">
+        <a class="like-card-title" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(display)}</a>
+        <p class="like-card-extract">${extract ? escapeHtml(extract) : ''}</p>
+        <div class="like-card-actions">
+          <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${ICONS.externalLink || ''} Open</a>
+          <button type="button" class="like-unlike-btn" data-unsave-title="${safeTitle}" aria-label="Unsave ${safeTitle}">${ICONS.bookmarkFilled || ''} Unsave</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // ===== Pull-to-refresh =====
 
 function initPullToRefresh() {
@@ -1385,6 +1547,7 @@ async function init() {
 
   // Expose helpers to window for inline handlers
   window.openAuthModal = openAuthModal;
+  window.showPage = showPage;
   window.reloadFeed = () => {
     clearApiBackoff();
     _prefetchPromise = null;
@@ -1399,6 +1562,8 @@ async function init() {
       const page = btn.dataset.page;
       showPage(page);
       if (page === 'stats-page') renderStatsPage();
+      if (page === 'search-page') { const { renderSearchPage } = await import('./search.js'); renderSearchPage(); }
+      if (page === 'saved-page') renderSavedPage();
     });
   });
 
@@ -1442,10 +1607,25 @@ async function init() {
   // Load more
   document.getElementById('load-more-btn')?.addEventListener('click', () => loadFeed(true));
 
+  // Search — submit on button click or Enter key
+  document.getElementById('search-submit-btn')?.addEventListener('click', async () => {
+    const { renderSearchPage, doSearch } = await import('./search.js');
+    const input = document.getElementById('search-input');
+    if (input?.value?.trim()) await doSearch(input.value.trim());
+    else renderSearchPage();
+  });
+  document.getElementById('search-input')?.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('search-submit-btn')?.click();
+    }
+  });
+
   // Settings page
   initSettings();
 
   // Auth state listener — pull prefs on login, push local prefs on first sign-up
+  let _accountRendering = false;
   onAuthStateChange(async user => {
     const wasSignedIn = !!currentUser;
     currentUser = user;
@@ -1494,23 +1674,41 @@ async function init() {
     const { renderAccountPage } = await import('./account.js');
     renderAccountSection();
     renderLikesSection();
-    renderAccountPage();
-  });
-
-  // Sync prefs whenever the page is hidden (catches changes that didn't trigger
-  // an explicit sync — e.g. system theme change, future settings additions).
-  window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && currentUser) {
-      scheduleSyncPrefs(currentUser.id, 0);
+    if (!_accountRendering) {
+      _accountRendering = true;
+      renderAccountPage().finally(() => { _accountRendering = false; });
     }
   });
 
-  // Flush session time on page hide
+  // Handle page lifecycle — persist state without reloading
   window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushSessionTime();
+    if (document.visibilityState === 'hidden') {
+      flushSessionTime();
+      snapshotFeedSession();
+      if (currentUser) scheduleSyncPrefs(currentUser.id, 0);
+    }
   });
-  window.addEventListener('pagehide', flushSessionTime);
-  window.addEventListener('pagehide', snapshotFeedSession);
+  window.addEventListener('pagehide', () => {
+    flushSessionTime();
+    snapshotFeedSession();
+  });
+
+  // Restore from bfcache without re-fetching everything
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+      const feedCards = document.getElementById('feed-cards');
+      if (feedCards && !feedCards.querySelector('.card')) {
+        const restored = restoreFeedSession(feedCards);
+        if (!restored) {
+          const lang = Storage.getPrefs().wikiLang || 'en';
+          const cached = getCachedArticles(lang, 8);
+          if (cached.length >= 2) {
+            renderCachedThenRefresh(feedCards, cached, lang);
+          }
+        }
+      }
+    }
+  });
 
   // Lightbox
   initLightbox();
@@ -1531,11 +1729,9 @@ async function init() {
   applyDecay();
 
   // Start the feed
-  showPage(location.pathname === '/account' ? 'account-page' : 'feed-page');
-  if (location.pathname === '/account') {
-    const { renderAccountPage } = await import('./account.js');
-    renderAccountPage();
-  }
+  const initialPage = location.pathname === '/account' ? 'account-page' : 'feed-page';
+  showPage(initialPage);
+  // If starting on /account, defer to the auth callback which handles rendering
   // Only auto-load feed if onboarding is already done
   if (localStorage.getItem('sw_onboarded')) {
     const restored = restoreFeedSession(document.getElementById('feed-cards'));
@@ -1577,11 +1773,17 @@ function escapeHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function escapeAttr(str) {
-  return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 document.addEventListener('DOMContentLoaded', init);

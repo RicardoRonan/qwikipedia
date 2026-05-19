@@ -80,7 +80,7 @@
 /* ===== Reset ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 16px; scroll-behavior: smooth; }
+html { font-size: 16px; scroll-behavior: smooth; overscroll-behavior-y: contain; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
@@ -92,6 +92,7 @@ body {
   transition: background 0.2s, color 0.2s;
   min-height: 100vh;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -296,7 +297,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 /* ===== Pull-to-refresh indicator ===== */
 #ptr-indicator {
   position: fixed;
-  top: calc(var(--nav-height) - 40px);
+  top: 12px;
   left: 50%;
   transform: translateX(-50%) translateY(0);
   display: flex;
@@ -306,7 +307,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   border-radius: 999px;
   background: var(--card);
   border: 1px solid var(--border);
-  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);
   font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--muted-foreground);
@@ -321,6 +322,15 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   height: 15px;
   flex-shrink: 0;
   transition: transform 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ptr-indicator { transition: opacity 0.01s; }
+  #ptr-indicator .ptr-spinner { transition: none; }
+  .card { transition: none; }
+  #nav { transition: none; }
+  .toast { animation: none; }
+  #feed-loading-hint .loading-spinner { animation: none; }
 }
 
 /* ===== Sidebar nav (desktop) ===== */
@@ -592,14 +602,59 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   color: var(--like-color);
 }
 
+.card-icon-btn.saved {
+  color: var(--foreground);
+}
+
 .card-icon-btn svg { width: 16px; height: 16px; }
 
-/* Feed loading hint */
+/* YouTube link row on cards */
+.card-youtube-row {
+  padding: 0 14px 8px;
+}
+
+.card-youtube-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.card-youtube-link:hover {
+  color: hsl(0 72% 50%);
+  text-decoration: none;
+}
+
+.card-youtube-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Search results card list */
+.card-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 calc(var(--radius) + 2px) calc(var(--radius) + 2px);
+  overflow: hidden;
+  margin: 0 16px;
+}
+
+/* Saved page bookmark override */
+.like-unlike-btn svg { width: 14px; height: 14px; }
+
+/* Feed loading hint — fixed centre-screen, above overlays */
 #feed-loading-hint {
-  position: absolute;
+  position: fixed;
   inset: 0;
   box-sizing: border-box;
   width: 100%;
+  height: 100%;
   margin: 0;
   padding: 0 16px;
   background: color-mix(in srgb, var(--background) 72%, transparent);
@@ -612,7 +667,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   justify-content: center;
   align-items: center;
   gap: 10px;
-  z-index: 20;
+  z-index: 250;
   pointer-events: none;
 }
 
