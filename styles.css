@@ -1,8 +1,8 @@
-/* ===== shadcn/ui design tokens — vanilla CSS port ===== */
+/* ===== shadcn/ui design tokens - vanilla CSS port ===== */
 :root {
   --font-scale: 1;
 
-  /* shadcn light — zinc palette */
+  /* shadcn light - zinc palette */
   --background:       hsl(0 0% 100%);
   --foreground:       hsl(240 10% 3.9%);
   --card:             hsl(0 0% 100%);
@@ -33,7 +33,7 @@
   --text-muted:   hsl(240 3.8% 60%);
   --border-color: var(--border);
 
-  /* Action colours — subtle in shadcn style */
+  /* Action colours - subtle in shadcn style */
   --like-color:     hsl(142 71% 45%);
   --dislike-color:  var(--destructive);
 
@@ -232,7 +232,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   padding: 0 16px 4px;
 }
 
-/* Onboarding chips — slightly larger for the full-screen modal */
+/* Onboarding chips - slightly larger for the full-screen modal */
 #interest-grid .interest-chip {
   padding: 9px 16px;
   font-size: var(--fs-sm);
@@ -412,14 +412,14 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 
 .nav-btn svg { width: 17px; height: 17px; flex-shrink: 0; }
 
-/* Labels visible inline — no tooltip needed on desktop */
+/* Labels visible inline - no tooltip needed on desktop */
 .nav-tooltip {
   font-size: var(--fs-sm);
   font-weight: inherit;
   color: inherit;
 }
 
-/* ===== Layout — centered in the space next to the sidebar ===== */
+/* ===== Layout - centered in the space next to the sidebar ===== */
 #app {
   width: min(680px, calc(100vw - var(--nav-width) - 32px));
   position: absolute;
@@ -448,7 +448,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   touch-action: pan-y;
 }
 
-/* ===== Card — vertical feed (title, extract, media, actions) ===== */
+/* ===== Card - vertical feed (title, extract, media, actions) ===== */
 .card {
   border-bottom: 1px solid var(--border);
   background: var(--card);
@@ -466,7 +466,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 
 .card:hover { background: var(--accent); }
 
-/* Text column — grows to fill all remaining space */
+/* Text column - grows to fill all remaining space */
 .card-body {
   flex: 1 1 0;
   min-width: 0;
@@ -475,7 +475,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   flex-direction: column;
 }
 
-/* Feed media — same horizontal bounds as .card-body text; vertical rhythm matches title gaps */
+/* Feed media - same horizontal bounds as .card-body text; vertical rhythm matches title gaps */
 .card-image-wrap {
   flex-shrink: 0;
   width: 100%;
@@ -555,7 +555,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   user-select: text;
 }
 
-/* Card actions row — sits at bottom of the text column */
+/* Card actions row - sits at bottom of the text column */
 .card-actions {
   display: flex;
   align-items: center;
@@ -648,7 +648,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 /* Saved page bookmark override */
 .like-unlike-btn svg { width: 14px; height: 14px; }
 
-/* Feed loading hint — fixed centre-screen, above overlays */
+/* Feed loading hint - fixed centre-screen, above overlays */
 #feed-loading-hint {
   position: fixed;
   inset: 0;
@@ -1133,7 +1133,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   user-select: none;
 }
 
-/* Drag handle pill — visible on touch devices only */
+/* Drag handle pill - visible on touch devices only */
 #lightbox::before {
   content: '';
   display: none;

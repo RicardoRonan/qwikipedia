@@ -1,4 +1,4 @@
-/** App-shell cache — same-origin static assets load fast/offline after first visit */
+/** App-shell cache - same-origin static assets load fast/offline after first visit */
 const CACHE = 'qwikipedia-shell-v1';
 const CORE = [
   './',

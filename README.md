@@ -1,6 +1,6 @@
 # Qwikipedia
 
-A personalized Wikipedia feed that learns what you like — built with vanilla HTML, CSS, and JavaScript.
+A personalized Wikipedia feed that learns what you like - built with vanilla HTML, CSS, and JavaScript.
 
 ## Features
 
@@ -10,14 +10,14 @@ A personalized Wikipedia feed that learns what you like — built with vanilla H
 - **Text size slider** (80%–130%) with live preview
 - **Wikipedia language selector** (English, Simple English, French, and more)
 - **Supabase auth** (email/password) for cross-device preference sync
-- **Wikipedia username link** — connect your Wikipedia profile
-- **No server needed** — recommendation logic runs entirely in your browser
+- **Wikipedia username link** - connect your Wikipedia profile
+- **No server needed** - recommendation logic runs entirely in your browser
 - **All data stays on your device** unless you sign in (then only theme + text size sync to the cloud)
 
 ## Quick Start
 
 1. Clone or download this folder
-2. Open `index.html` in a browser — it works without any build step
+2. Open `index.html` in a browser - it works without any build step
 3. *(Optional)* Follow `SUPABASE_SETUP.md` to enable login and preference sync
 
 ## File Structure
@@ -35,11 +35,11 @@ A personalized Wikipedia feed that learns what you like — built with vanilla H
 
 ## Data Sources
 
-- **Wikimedia REST API** — article summaries and thumbnails
+- **Wikimedia REST API** - article summaries and thumbnails
   - `https://en.wikipedia.org/api/rest_v1/page/summary/{title}`
-- **MediaWiki Action API** — search and random articles
+- **MediaWiki Action API** - search and random articles
   - `https://en.wikipedia.org/w/api.php`
-- **Wikimedia Featured Content API** — featured article of the day
+- **Wikimedia Featured Content API** - featured article of the day
 
 ## Wikimedia API Rate-Limit Compliance
 
@@ -51,12 +51,12 @@ for anonymous browser traffic and avoid the much stricter **10/min** "unidentifi
 
 | Practice | Implementation |
 |----------|----------------|
-| Browser User-Agent | We rely on the browser's built-in `User-Agent` header, which puts us in the "Requests made from a web browser by an unauthenticated user" 200/min bucket. We deliberately **don't** send a custom `Api-User-Agent` header because any non-safelisted header on a cross-origin `fetch` triggers a CORS preflight `OPTIONS` request — doubling the request count against Wikimedia's per-IP limit. |
-| Max 3 concurrent requests | `CONCURRENCY = 2` in `wiki.js` — always under the guideline |
-| Soft per-minute cap | `REQUESTS_PER_MINUTE_CAP = 80` sliding-window throttle in `wiki.js` — stays far under 200/min |
+| Browser User-Agent | We rely on the browser's built-in `User-Agent` header, which puts us in the "Requests made from a web browser by an unauthenticated user" 200/min bucket. We deliberately **don't** send a custom `Api-User-Agent` header because any non-safelisted header on a cross-origin `fetch` triggers a CORS preflight `OPTIONS` request - doubling the request count against Wikimedia's per-IP limit. |
+| Max 3 concurrent requests | `CONCURRENCY = 2` in `wiki.js` - always under the guideline |
+| Soft per-minute cap | `REQUESTS_PER_MINUTE_CAP = 80` sliding-window throttle in `wiki.js` - stays far under 200/min |
 | Respect `Retry-After` | `parseRetryAfterMs()` honors the server header, capped at 30s to avoid stale long backoffs |
 | Exponential fallback on network errors | 600ms, 1200ms, 1800ms between transient retries (max 2 attempts) |
-| Aggressive local caching | LRU of up to 140 REST summaries in `localStorage` (8-day TTL) — cached articles render instantly and are served silently during backoff |
+| Aggressive local caching | LRU of up to 140 REST summaries in `localStorage` (8-day TTL) - cached articles render instantly and are served silently during backoff |
 | No credentials | `credentials: 'omit'` on all Wikimedia requests |
 | Conservative batch sizes | 8 articles per load, 10-title random pool, 6-title topic search |
 | Background refresh | Cached-first rendering + silent background fetch; only first-run shows the % spinner |
@@ -72,7 +72,7 @@ for anonymous browser traffic and avoid the much stricter **10/min** "unidentifi
 | Authenticated, established editor | **2000 req/min** |
 | Authenticated with bot flag | Exempt |
 
-On a `429 Too Many Requests` or `503 Service Unavailable`, Qwikipedia pauses new requests until `Retry-After` elapses and keeps serving from the local cache — no silent failures, no request flood.
+On a `429 Too Many Requests` or `503 Service Unavailable`, Qwikipedia pauses new requests until `Retry-After` elapses and keeps serving from the local cache - no silent failures, no request flood.
 
 ## How the Algorithm Works
 

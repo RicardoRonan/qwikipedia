@@ -1,4 +1,4 @@
-// settings.js — settings page logic: theme, text scale, account controls
+// settings.js - settings page logic: theme, text scale, account controls
 
 import { Storage } from './storage.js';
 import { showToast } from './toast.js';
@@ -97,7 +97,7 @@ export function initSettings() {
     resetBtn.addEventListener('click', async () => {
       if (confirm('Reset your recommendation history? This cannot be undone.')) {
         Storage.reset();
-        showToast('Algorithm reset — your feed starts fresh', 'info');
+        showToast('Algorithm reset - your feed starts fresh', 'info');
         const user = await getCurrentUser();
         if (user) scheduleSyncPrefs(user.id, 0);
         renderLikesSection();
@@ -271,7 +271,7 @@ export async function renderAccountSection() {
 const LIKES_PAGE_SIZE = 20;
 let _likesShown = LIKES_PAGE_SIZE;
 let _likesQuery = '';
-/** Cache of fetched summaries keyed by title — keeps re-renders snappy. */
+/** Cache of fetched summaries keyed by title - keeps re-renders snappy. */
 const _likesSummaryCache = new Map();
 /** In-flight fetch promises, deduped per title. */
 const _likesPending = new Map();
@@ -282,7 +282,7 @@ function escapeHtml(s = '') {
   }[c]));
 }
 
-/** Render the "Your likes" section — only visible when signed in. */
+/** Render the "Your likes" section - only visible when signed in. */
 export async function renderLikesSection() {
   const section = document.getElementById('likes-section');
   if (!section) return;
@@ -345,7 +345,7 @@ export async function renderLikesSection() {
         if (row) {
           row.querySelector('.like-card-extract')?.classList.remove('likes-pending');
           const ex = row.querySelector('.like-card-extract');
-          if (ex) ex.textContent = 'Couldn\'t load preview — open on Wikipedia.';
+          if (ex) ex.textContent = 'Couldn\'t load preview - open on Wikipedia.';
         }
       })
       .finally(() => { _likesPending.delete(title); });
@@ -406,7 +406,7 @@ function renderLikeCardHtml(title, article, lang) {
   `;
 }
 
-/** Wire search, clear-all, and unlike delegation (runs once — #likes-feed lives on the Account page). */
+/** Wire search, clear-all, and unlike delegation (runs once - #likes-feed lives on the Account page). */
 function bindLikesEvents() {
   const search = document.getElementById('likes-search');
   if (search && !search.dataset.bound) {

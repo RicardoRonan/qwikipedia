@@ -1,4 +1,4 @@
-// auth.js — Supabase auth integration
+// auth.js - Supabase auth integration
 // Replace SUPABASE_URL and SUPABASE_ANON_KEY with your project values
 
 import { Storage } from './storage.js';
@@ -154,7 +154,7 @@ function mergeStats(cloud, local) {
 
 /**
  * Sync local app state to Supabase (prefs, algorithm, likes, feed history, stats).
- * Debounced via the caller — never throws.
+ * Debounced via the caller - never throws.
  * Requires matching columns on `profiles` (see supabase_profiles_extend.sql).
  */
 export async function syncPrefsToCloud(userId) {
@@ -242,7 +242,7 @@ export async function pullPrefsFromCloud(userId) {
 }
 
 /**
- * Debounced sync helper — call as often as you like; only one upsert fires
+ * Debounced sync helper - call as often as you like; only one upsert fires
  * per quiet window, regardless of how many preferences changed.
  */
 let _syncTimer = null;

@@ -1,4 +1,4 @@
-// app.js — main bootstrapper, feed rendering, routing
+// app.js - main bootstrapper, feed rendering, routing
 
 import { Storage } from './storage.js';
 import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay, inferTopics } from './engine.js';
@@ -10,7 +10,7 @@ import { ICONS } from './icons.js';
 import { cleanWikipediaText } from './text-utils.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
 
-// GSAP helper — gracefully falls back to no-op if CDN hasn't loaded yet
+// GSAP helper - gracefully falls back to no-op if CDN hasn't loaded yet
 function gsap() { return window.gsap || null; }
 
 // ===== State =====
@@ -338,7 +338,7 @@ const INFINITE_SCROLL_ROOT_MARGIN_PX = 240;
 const UNDERFILL_MAX_CHAIN = 2;
 let _underfillChain = 0;
 
-// Single in-flight prefetch promise — prevents duplicate background fetches
+// Single in-flight prefetch promise - prevents duplicate background fetches
 let _prefetchPromise = null;
 let _prefetchLang    = null;
 let _lastAutoLoadAt  = 0;
@@ -416,7 +416,7 @@ function snapshotFeedSession() {
   } catch {}
 }
 
-/** Old session cache stored only `{ title }` — not enough to render a card. */
+/** Old session cache stored only `{ title }` - not enough to render a card. */
 function cacheEntryHasRenderablePayload(a) {
   if (!a?.title) return false;
   if (String(a.extract || '').trim().length > 0) return true;
@@ -482,7 +482,7 @@ function refreshLoadingStatus() {
   if (!labelEl) return;
   const remaining = getApiBackoffRemainingMs();
 
-  // If cards are already on screen, NEVER show an alarming banner —
+  // If cards are already on screen, NEVER show an alarming banner -
   // the user already has content; the next load will resume silently.
   if (remaining > 250) {
     const hasCards = !!document.querySelector('#feed-cards .card');
@@ -527,17 +527,17 @@ function renderCachedThenRefresh(container, cached, lang) {
   container.innerHTML = '';
   appendUniqueArticles(container, cached);
 
-  // Hide any leftover loading hint — cached articles are visible now.
+  // Hide any leftover loading hint - cached articles are visible now.
   const hint = document.getElementById('feed-loading-hint');
   if (hint) hint.style.display = 'none';
   stopLoadingStatusPolling();
 
-  // Infinite scroll armed right away — no waiting
+  // Infinite scroll armed right away - no waiting
   attachScrollSentinel();
 
   silentBackgroundRefresh(container, lang);
 
-  // Featured card (silent, no blocking) — also gated on backoff
+  // Featured card (silent, no blocking) - also gated on backoff
   if (getApiBackoffRemainingMs() <= 1000) getFeaturedCard(lang).then(featured => {
     if (!featured) return;
     if (container.querySelector(`.card[data-title="${CSS.escape(featured.title)}"]`)) return;
@@ -605,7 +605,7 @@ async function loadFeed(append = false) {
 
   /* ── Backoff guard ──────────────────────────────────────────────────────────
    * Wikipedia is asking us to slow down. If we have ANY cached articles, append
-   * them silently. Otherwise just stop — never show the alarm banner over a
+   * them silently. Otherwise just stop - never show the alarm banner over a
    * feed that already has content. The sentinel will re-arm after the backoff
    * window so loading resumes naturally. */
   const backoffMs = getApiBackoffRemainingMs();
@@ -616,7 +616,7 @@ async function loadFeed(append = false) {
       return;
     }
     // No cache to fall back on. If there are already cards on screen, do nothing
-    // visible — re-arm the sentinel after the cooldown so scrolling resumes.
+    // visible - re-arm the sentinel after the cooldown so scrolling resumes.
     if (hasExistingFeed || append) {
       isLoading = false;
       setTimeout(() => { if (!isLoading) attachScrollSentinel(); }, backoffMs + 250);
@@ -696,7 +696,7 @@ async function loadFeed(append = false) {
         }
       }
       if (!append && !hasExistingFeed) showEmptyState(container);
-      if (!append && hasExistingFeed) showToast('No new articles right now — pull to refresh', 'info');
+      if (!append && hasExistingFeed) showToast('No new articles right now - pull to refresh', 'info');
       if (append) showEndOfFeed(container);
     } else {
       if (!append) {
@@ -710,7 +710,7 @@ async function loadFeed(append = false) {
     }
   } catch (err) {
     if (!append && !hasExistingFeed) showErrorState(container);
-    if (!append && hasExistingFeed) showToast('Reload failed — keeping current feed', 'error');
+    if (!append && hasExistingFeed) showToast('Reload failed - keeping current feed', 'error');
     console.error('Feed load error:', err);
     if (loadingHint) {
       loadingHint.style.display = 'none';
@@ -743,7 +743,7 @@ async function loadFeed(append = false) {
   // Attach new sentinel AFTER loading is fully done
   attachScrollSentinel();
 
-  // Start prefetching the NEXT batch in the background — only one at a time
+  // Start prefetching the NEXT batch in the background - only one at a time
   startPrefetch(lang);
 
   if (gotArticles) scheduleUnderfillIfShort();
@@ -759,7 +759,7 @@ function scheduleUnderfillIfShort() {
       const wrap = document.getElementById('feed-cards');
       if (!wrap?.querySelector('.card')) return;
       // Require a meaningful underfill (more than 1.4x viewport) so we don't chain on
-      // pages that are "almost full" — those should rely on real user scrolling.
+      // pages that are "almost full" - those should rely on real user scrolling.
       const shortPage = document.documentElement.scrollHeight < window.innerHeight * 1.4;
       if (!shortPage) {
         _underfillChain = 0;
@@ -781,7 +781,7 @@ function attachScrollSentinel() {
   const cards = container.querySelectorAll('.card');
   if (cards.length === 0) return;
 
-  /* Sentinel sits very near the bottom — auto-load only fires once it actually
+  /* Sentinel sits very near the bottom - auto-load only fires once it actually
    * scrolls into view, never on initial attachment. */
   const back       = Math.min(SENTINEL_FROM_END, cards.length - 1);
   const targetCard = cards[cards.length - 1 - back];
@@ -903,7 +903,7 @@ function setAuthModalMode(mode) {
     if (switchLink) switchLink.textContent = 'Sign up';
   } else {
     if (title) title.textContent = 'Create account';
-    if (subtitle) subtitle.textContent = 'Your feed stays on your device — this just syncs preferences';
+    if (subtitle) subtitle.textContent = 'Your feed stays on your device - this just syncs preferences';
     if (submitBtn) submitBtn.textContent = 'Create account';
     if (switchText) switchText.textContent = 'Already have an account?';
     if (switchLink) switchLink.textContent = 'Sign in';
@@ -932,7 +932,7 @@ async function handleAuthSubmit(e) {
       await signUp(email, password);
     }
     closeAuthModal();
-    showToast(mode === 'signin' ? 'Signed in successfully' : 'Account created — welcome!', 'success');
+    showToast(mode === 'signin' ? 'Signed in successfully' : 'Account created - welcome!', 'success');
   } catch (err) {
     if (errorEl) {
       errorEl.textContent = err.message || 'Something went wrong';
@@ -1004,7 +1004,7 @@ function initLightbox() {
   let dragCurrentY = 0;
   let isDragging = false;
   const DISMISS_THRESHOLD = 120; // px down to auto-dismiss
-  const VELOCITY_THRESHOLD = 0.6; // px/ms — fast flick also dismisses
+  const VELOCITY_THRESHOLD = 0.6; // px/ms - fast flick also dismisses
 
   function resetDragState() {
     isDragging = false;
@@ -1066,7 +1066,7 @@ function initLightbox() {
 
   lb.addEventListener('touchstart', e => { lb._touchStartTime = e.timeStamp; }, { passive: true });
 
-  // Download — fetch as blob to force save dialog (bypasses cross-origin restriction)
+  // Download - fetch as blob to force save dialog (bypasses cross-origin restriction)
   lbDl?.addEventListener('click', async () => {
     if (!currentSrc) return;
     lbDl.classList.add('loading');
@@ -1082,7 +1082,7 @@ function initLightbox() {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      showToast('Download failed — try right-clicking the image', 'error');
+      showToast('Download failed - try right-clicking the image', 'error');
     } finally {
       lbDl.classList.remove('loading');
       lbDl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg> Download`;
@@ -1310,7 +1310,7 @@ function renderStatsPage() {
     ? bottomTopics.map(([t, w]) => topicBar(t, w, maxBottom, false)).join('')
     : `<p class="stats-empty-hint">Mark articles as "not interested" to see avoided topics</p>`;
 
-  // Liked posts list — each row has an unlike button
+  // Liked posts list - each row has an unlike button
   const likedHtml = history.likedTitles.length
     ? history.likedTitles.slice(0, 50).map(title => `
         <div class="liked-post-row" data-title="${escapeAttr(title)}">
@@ -1350,7 +1350,7 @@ function renderStatsPage() {
     </div>
   `;
 
-  // Unlike button handler — remove from liked list and re-render
+  // Unlike button handler - remove from liked list and re-render
   container.addEventListener('click', e => {
     const btn = e.target.closest('[data-unlike]');
     if (!btn) return;
@@ -1607,7 +1607,7 @@ async function init() {
   // Load more
   document.getElementById('load-more-btn')?.addEventListener('click', () => loadFeed(true));
 
-  // Search — submit on button click or Enter key
+  // Search - submit on button click or Enter key
   document.getElementById('search-submit-btn')?.addEventListener('click', async () => {
     const { renderSearchPage, doSearch } = await import('./search.js');
     const input = document.getElementById('search-input');
@@ -1624,7 +1624,7 @@ async function init() {
   // Settings page
   initSettings();
 
-  // Auth state listener — pull prefs on login, push local prefs on first sign-up
+  // Auth state listener - pull prefs on login, push local prefs on first sign-up
   let _accountRendering = false;
   onAuthStateChange(async user => {
     const wasSignedIn = !!currentUser;
@@ -1680,7 +1680,7 @@ async function init() {
     }
   });
 
-  // Handle page lifecycle — persist state without reloading
+  // Handle page lifecycle - persist state without reloading
   window.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       flushSessionTime();

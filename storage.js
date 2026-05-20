@@ -1,4 +1,4 @@
-// storage.js — single interface for all localStorage persistence
+// storage.js - single interface for all localStorage persistence
 
 const KEYS = {
   PREFS:   'sw_prefs',

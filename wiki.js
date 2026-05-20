@@ -1,5 +1,5 @@
 import { cleanWikipediaText } from './text-utils.js';
-// wiki.js — Wikipedia API adapters following the Wikimedia rate-limit best practices
+// wiki.js - Wikipedia API adapters following the Wikimedia rate-limit best practices
 // https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits
 
 const TIMEOUT_MS  = 10000;
@@ -82,7 +82,7 @@ export function getApiBackoffRemainingMs() {
   return Math.max(0, globalBackoffUntil - Date.now());
 }
 
-/** Clear client-side backoff — e.g. after user clicks “Try again” */
+/** Clear client-side backoff - e.g. after user clicks “Try again” */
 export function clearApiBackoff() {
   globalBackoffUntil = 0;
 }
@@ -94,7 +94,7 @@ async function fetchWithTimeout(url, retries = MAX_RETRIES) {
     try {
       await waitGlobalBackoff();
       await throttlePerMinute();
-      // No custom headers — keeps requests CORS-"simple" so browsers don't
+      // No custom headers - keeps requests CORS-"simple" so browsers don't
       // send a preflight OPTIONS and double our request count.
       const res = await limited(() => fetch(url, {
         signal: controller.signal,
@@ -136,7 +136,7 @@ function normalizeSummary(raw, lang = 'en') {
   };
 }
 
-/** Local LRU of raw REST `/page/summary` JSON — inspired by bundled-data demos; cuts repeat/article traffic. */
+/** Local LRU of raw REST `/page/summary` JSON - inspired by bundled-data demos; cuts repeat/article traffic. */
 const SUMMARY_DISK_KEY = 'sw_rest_summary_v1';
 const SUMMARY_DISK_MAX_ENTRIES = 140;
 const SUMMARY_DISK_TTL_MS = 8 * 24 * 60 * 60 * 1000;
@@ -185,7 +185,7 @@ function getPersistedSummaryJson(lang, title) {
   return ent.json;
 }
 
-/** Returns up to `limit` cached normalized articles for a language — used during rate-limit fallback. */
+/** Returns up to `limit` cached normalized articles for a language - used during rate-limit fallback. */
 export function getCachedArticles(lang = 'en', limit = 12) {
   const bundle = readSummaryDisk();
   // Most-recently-added first (order is push-on-insert)
@@ -290,7 +290,7 @@ export async function fetchCategoriesBatch(titles, lang = 'en') {
         map.set(page.title, cats);
       }
     } catch {
-      // Silently skip — articles will fall back to no categories
+      // Silently skip - articles will fall back to no categories
     }
   }
   return map;

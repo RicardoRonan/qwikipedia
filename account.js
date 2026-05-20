@@ -137,7 +137,7 @@ export async function renderAccountPage() {
     btn.disabled = true;
     try {
       await sendPasswordReset(user.email);
-      showToast('Password reset email sent — check your inbox', 'success');
+      showToast('Password reset email sent - check your inbox', 'success');
     } catch (err) {
       showToast(err?.message || 'Could not send reset email', 'error');
     } finally {

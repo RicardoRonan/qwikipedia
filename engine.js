@@ -1,4 +1,4 @@
-// engine.js — local recommendation engine
+// engine.js - local recommendation engine
 
 import { Storage } from './storage.js';
 import { normalizeTopic, topicTokens } from './text-utils.js';
@@ -207,7 +207,7 @@ export function applyDecay() {
   Storage.setEngine({ topicWeights: weights });
 }
 
-// Build a pool of candidate article titles — all network calls run in parallel
+// Build a pool of candidate article titles - all network calls run in parallel
 // Re-runs random fetches if the seen-filter wipes most of the pool.
 async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
   onProgress?.(6);
@@ -238,7 +238,7 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
 
   const pool = new Set([...randomTitles, ...searchResults.flat()]);
 
-  /* If history is large, the seen-filter often drains the pool — top up with
+  /* If history is large, the seen-filter often drains the pool - top up with
    * extra random pages until we have a workable batch (or give up after 2 tries). */
   let unseen = [...pool].filter(t => !seen.has(t));
   let topUps = 0;
@@ -260,7 +260,7 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
   onProgress?.(2);
   const candidates = await buildCandidatePool(lang, onProgress);
 
-  // Shuffle — only fetch summaries for what we realistically need (keeps request count low)
+  // Shuffle - only fetch summaries for what we realistically need (keeps request count low)
   const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 4);
 
   const articles = await fetchSummaryBatch(shuffled, lang, {
@@ -276,7 +276,7 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
   onProgress?.(84);
 
   // Enforce topic diversity when we can infer topics (categories or title seeds).
-  // Without categories, inferTopics is often [] for every title — they would all
+  // Without categories, inferTopics is often [] for every title - they would all
   // bucket as "other" and wrongly cap the batch at 3 articles.
   // Also filter by the user's selected interests: if the user has explicitly
   // chosen interests, only show articles whose inferred topics match at least one.
