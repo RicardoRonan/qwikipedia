@@ -8,6 +8,7 @@ import {
   searchTitles,
   fetchCategoryMembers,
   fetchFeaturedToday,
+  getCachedArticles,
 } from './wiki.js';
 
 // Topics mapped to seed search queries used for candidate generation
@@ -221,22 +222,28 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
     console.debug('[feed] selected interests', Storage.getPrefs().interests || []);
     console.debug('[feed] weighted topics picked', topics);
   }
+  const poolFromCache = getCachedArticles(lang, minTargetSize);
+
   const searches = topics.map(topic => {
     const seeds = TOPIC_SEEDS[topic] || [topic];
     const query = seeds[Math.floor(Math.random() * seeds.length)];
     if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
       console.debug('[feed] fetching query', query);
     }
-    return searchTitles(query, 6, lang).catch(() => []);
+    return searchTitles(query, 8, lang).catch(() => []);
   });
 
   const [randomTitles, ...searchResults] = await Promise.all([
-    fetchRandomTitles(10, lang).catch(() => []),
+    fetchRandomTitles(12, lang).catch(() => []),
     ...searches,
   ]);
   onProgress?.(11);
 
-  const pool = new Set([...randomTitles, ...searchResults.flat()]);
+  const pool = new Set([
+    ...(poolFromCache.map(a => a.title)),
+    ...randomTitles,
+    ...searchResults.flat(),
+  ]);
 
   /* If history is large, the seen-filter often drains the pool - top up with
    * extra random pages until we have a workable batch (or give up after 2 tries). */
@@ -245,7 +252,7 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
   const TOPUP_MAX = 1;
   while (unseen.length < minTargetSize && topUps < TOPUP_MAX) {
     topUps++;
-    const more = await fetchRandomTitles(12, lang).catch(() => []);
+    const more = await fetchRandomTitles(15, lang).catch(() => []);
     more.forEach(t => pool.add(t));
     unseen = [...pool].filter(t => !seen.has(t));
     onProgress?.(11 + Math.round((topUps / TOPUP_MAX) * 6));
@@ -256,15 +263,15 @@ async function buildCandidatePool(lang = 'en', onProgress, minTargetSize = 8) {
 }
 
 // Fetch next batch of feed articles (`onProgress` is 0–99; caller sets 100% when rendered)
-export async function fetchFeedBatch(lang = 'en', batchSize = 8, onProgress) {
+export async function fetchFeedBatch(lang = 'en', batchSize = 10, onProgress) {
   onProgress?.(2);
   const candidates = await buildCandidatePool(lang, onProgress);
 
   // Shuffle - only fetch summaries for what we realistically need (keeps request count low)
-  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 4);
+  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 6);
 
   const articles = await fetchSummaryBatch(shuffled, lang, {
-    includeCategories: false,
+    includeCategories: true,
     onChunkProgress: onProgress
       ? ({ chunkIndex, totalChunks }) => {
           const pct = 20 + ((chunkIndex + 1) / totalChunks) * 62;

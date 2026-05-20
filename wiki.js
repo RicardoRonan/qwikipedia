@@ -1,11 +1,17 @@
 import { cleanWikipediaText } from './text-utils.js';
+import { checkArticleCache, storeArticleCache, hasCacheClient } from './cache.js';
+
+let _cacheUserId = null;
+export function setCacheUserId(userId) {
+  _cacheUserId = userId;
+}
 // wiki.js - Wikipedia API adapters following the Wikimedia rate-limit best practices
 // https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits
 
 const TIMEOUT_MS  = 10000;
 const MAX_RETRIES = 2;
-/** Wikimedia guideline: ≤ 3 concurrent requests. We run at 2 for extra headroom. */
-const CONCURRENCY = 2;
+/** Wikimedia guideline: ≤ 3 concurrent requests. We run at 3 for the full headroom. */
+const CONCURRENCY = 3;
 const MIN_RETRY_AFTER_MS = 5000;
 /**
  * Soft per-minute cap. Browser-origin unauthenticated bucket is 200/min; we stay
@@ -222,11 +228,33 @@ function setPersistedSummaryJson(lang, title, json) {
 // Fetch a single article summary by title
 export async function fetchSummary(title, lang = 'en') {
   const hit = getPersistedSummaryJson(lang, title);
-  if (hit) return normalizeSummary(hit, lang);
+  if (hit) {
+    const article = normalizeSummary(hit, lang);
+    dispatchToBackgroundCache(article, lang);
+    return article;
+  }
   const url = `${baseUrl(lang)}/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   const data = await fetchWithTimeout(url);
   setPersistedSummaryJson(lang, title, data);
-  return normalizeSummary(data, lang);
+  const article = normalizeSummary(data, lang);
+  dispatchToBackgroundCache(article, lang);
+  return article;
+}
+
+// Track which titles have already been dispatched to the cache to avoid re-sends
+const _cacheDispatched = new Set();
+
+function dispatchToBackgroundCache(article, lang) {
+  if (!_cacheUserId || !hasCacheClient()) return;
+  const key = `${_cacheUserId}::${lang}::${article.title}`;
+  if (_cacheDispatched.has(key)) return;
+  _cacheDispatched.add(key);
+  storeArticleCache(_cacheUserId, lang, [article]).catch(() => {});
+  // Keep the set from growing unbounded
+  if (_cacheDispatched.size > 500) {
+    const arr = [..._cacheDispatched];
+    arr.slice(0, 100).forEach(k => _cacheDispatched.delete(k));
+  }
 }
 
 // Fetch random article titles (returns array of title strings)
@@ -296,8 +324,8 @@ export async function fetchCategoriesBatch(titles, lang = 'en') {
   return map;
 }
 
-// Fetch summaries in **small sequential chunks** (no giant parallel fan-out).
-// Categories are fetched once for titles that actually got summaries.
+// Fetch summaries in parallel (concurrency-limited by the global CONCURRENCY limiter).
+// Categories fetched once for titles that actually got summaries.
 /**
  * @param {string[]} titles
  * @param {string} [lang='en']
@@ -308,22 +336,34 @@ export async function fetchSummaryBatch(titles, lang = 'en', opts = {}) {
   const { includeCategories = true, onChunkProgress } = opts;
   if (!titles.length) return [];
 
-  const SUMMARY_CHUNK = 4;
-  const totalChunks = Math.max(1, Math.ceil(titles.length / SUMMARY_CHUNK));
-  const merged = [];
+  // Check Supabase cache for as many titles as possible (signed-in users)
+  let cachedMap = new Map();
+  if (_cacheUserId && hasCacheClient() && titles.length > 2) {
+    try {
+      cachedMap = await checkArticleCache(_cacheUserId, lang, titles);
+    } catch {
+      cachedMap = new Map();
+    }
+  }
 
-  for (let i = 0; i < titles.length; i += SUMMARY_CHUNK) {
-    const chunk = titles.slice(i, i + SUMMARY_CHUNK);
-    const settled = await Promise.allSettled(chunk.map(t => fetchSummary(t, lang)));
-    for (const r of settled) {
+  // Determine which titles still need fetching from Wikipedia
+  const missing = titles.filter(t => !cachedMap.has(t));
+  const merged = [...cachedMap.values()];
+
+  // Fetch all missing summaries in parallel — the CONCURRENCY limiter handles throttle
+  if (missing.length > 0) {
+    const SUMMARY_CHUNK = 8;
+    const totalChunks = Math.max(1, Math.ceil(missing.length / SUMMARY_CHUNK));
+    const settled = await Promise.allSettled(missing.map(t => fetchSummary(t, lang)));
+    for (const [i, r] of settled.entries()) {
       if (r.status !== 'fulfilled') continue;
       const article = r.value;
       if (article.extract?.length > 50) merged.push(article);
+      onChunkProgress?.({
+        chunkIndex: Math.min(Math.floor(i / SUMMARY_CHUNK), totalChunks - 1),
+        totalChunks,
+      });
     }
-    onChunkProgress?.({
-      chunkIndex: Math.floor(i / SUMMARY_CHUNK),
-      totalChunks,
-    });
   }
 
   let categoryMap = new Map();

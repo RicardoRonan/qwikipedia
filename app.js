@@ -9,6 +9,8 @@ import { showToast, showActionToast } from './toast.js';
 import { ICONS } from './icons.js';
 import { cleanWikipediaText } from './text-utils.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
+import { setCacheUserId, getCachedArticles } from './wiki.js';
+import { warmArticleCache, hasCacheClient, pruneStaleCache } from './cache.js';
 
 // GSAP helper - gracefully falls back to no-op if CDN hasn't loaded yet
 function gsap() { return window.gsap || null; }
@@ -329,7 +331,7 @@ function animateSave(cardEl, saveBtn, article) {
 
 // ===== Feed loading =====
 
-const BATCH_SIZE       = 8;   // articles rendered per batch (keeps per-load API cost low)
+const BATCH_SIZE       = 10;  // articles rendered per batch
 const SENTINEL_FROM_END = 2;  // cards from the very bottom; small so it must scroll into view
 const AUTOLOAD_COOLDOWN_MS = 1200;
 /** Pre-fetch when sentinel is within this many px below the viewport bottom */
@@ -1626,10 +1628,14 @@ async function init() {
 
   // Auth state listener - pull prefs on login, push local prefs on first sign-up
   let _accountRendering = false;
+  let _cacheWarmed = false;
   onAuthStateChange(async user => {
     const wasSignedIn = !!currentUser;
     currentUser = user;
     updateNavUser(user);
+
+    // Sync the cache userId so wiki.js stores fetched articles in Supabase
+    setCacheUserId(user?.id || null);
 
     if (user) {
       try {
@@ -1653,7 +1659,17 @@ async function init() {
         }
 
         if (!wasSignedIn) showToast('Preferences synced from your account', 'info');
+
+        // Warm the Supabase article cache in the background (once per session)
+        if (!_cacheWarmed && hasCacheClient()) {
+          _cacheWarmed = true;
+          const lang = refreshedPrefs.wikiLang || 'en';
+          warmArticleCache(user.id, lang).catch(() => {});
+          pruneStaleCache(user.id, lang).catch(() => {});
+        }
       } catch {}
+    } else {
+      _cacheWarmed = false;
     }
 
     // Bad or stale feed restore (e.g. old { title }-only cache): refill from API
