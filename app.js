@@ -11,6 +11,7 @@ import { cleanWikipediaText } from './text-utils.js';
 import { bindYoutubeLinks, prefetchVisibleYoutubeQueries } from './ai.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
 import { warmArticleCache, hasCacheClient, pruneStaleCache } from './cache.js';
+import { toggleDeepDive } from './deepdive.js';
 
 // GSAP helper - gracefully falls back to no-op if CDN hasn't loaded yet
 function gsap() { return window.gsap || null; }
@@ -94,19 +95,22 @@ function createCard(article, featured = false) {
       <p class="card-extract">${escapeHtml(cleanWikipediaText(article.extract || ''))}</p>
       ${imageHtml}
       <div class="card-actions">
-        <a class="card-read-link" href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
-          ${ICONS.externalLink} wikipedia.org
-        </a>
+        <div class="card-links">
+          <a class="card-read-link" href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener" aria-label="Read on Wikipedia">
+            ${ICONS.externalLink} wikipedia.org
+          </a>
+          <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(displayTitleRaw)}" aria-label="Watch related videos on YouTube">
+            ${ICONS.youtube || '▶'} Watch related videos
+          </a>
+        </div>
         <div class="card-icon-group">
           <button class="card-icon-btn btn-save ${isSaved ? 'saved' : ''}" aria-label="${isSaved ? 'Remove from saved' : 'Save for later'}">${isSaved ? ICONS.bookmarkFilled : ICONS.bookmark}</button>
           <button class="card-icon-btn btn-like ${isLiked ? 'liked' : ''}" aria-label="Like this article">${isLiked ? ICONS.heartFilled : ICONS.heart}</button>
           <button class="card-icon-btn btn-dislike" aria-label="Not interested">${ICONS.x}</button>
+          <button class="card-icon-btn btn-deepdive" data-deepdive-topic="${escapeAttr(displayTitleRaw)}" aria-label="Deep dive research">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
         </div>
-      </div>
-      <div class="card-youtube-row">
-        <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(displayTitleRaw)}" aria-label="Watch related videos on YouTube">
-          ${ICONS.youtube || '▶'} Watch related videos
-        </a>
       </div>
     </div>
   `;
@@ -130,6 +134,14 @@ function createCard(article, featured = false) {
     e.stopPropagation();
     animateSave(el, saveBtn, article);
   });
+
+  const deepDiveBtn = el.querySelector('.btn-deepdive');
+  if (deepDiveBtn) {
+    deepDiveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDeepDive(deepDiveBtn, el, displayTitleRaw);
+    });
+  }
 
   setupExtractExpansion(el, extractEl);
 

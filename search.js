@@ -152,12 +152,12 @@ function createSearchCard(article) {
       <p class="card-extract">${escapeHtml(cleanWikipediaText(article.extract || ''))}</p>
       ${imageHtml}
       <div class="card-actions">
-        <a class="card-read-link" href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener">${ICONS.externalLink} wikipedia.org</a>
-      </div>
-      <div class="card-youtube-row">
-        <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(displayTitle)}" aria-label="Watch related videos on YouTube">
-          ${ICONS.youtube || '▶'} Watch related videos
-        </a>
+        <div class="card-links">
+          <a class="card-read-link" href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener">${ICONS.externalLink} wikipedia.org</a>
+          <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(displayTitle)}" aria-label="Watch related videos on YouTube">
+            ${ICONS.youtube || '▶'} Watch related videos
+          </a>
+        </div>
       </div>
     </div>
   `;
