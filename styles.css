@@ -634,6 +634,115 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   height: 14px;
 }
 
+.card-youtube-link.is-loading {
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.card-youtube-link.is-loading::after {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+  border: 2px solid var(--border);
+  border-top-color: var(--foreground);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+/* Search AI hints & suggestion chips */
+.search-ai-hint {
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+  margin-top: 6px;
+}
+
+.search-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.search-suggestion-chip {
+  padding: 6px 12px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.search-suggestion-chip:hover {
+  background: var(--accent);
+  border-color: var(--border);
+}
+
+.search-refined-note {
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+  padding: 10px 16px 0;
+  margin: 0;
+}
+
+/* Settings toggle for AI */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.15s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--background);
+  border-radius: 50%;
+  transition: transform 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--foreground);
+  border-color: var(--foreground);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
 /* Search results card list */
 .card-list {
   display: flex;

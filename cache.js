@@ -2,6 +2,8 @@
 // Speeds up feed loading by serving pre-fetched articles from Supabase
 // instead of hitting the Wikipedia API every time.
 
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
+
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const MAX_PREFETCH_PER_RUN = 20; // articles preloaded per background cycle
 
@@ -10,8 +12,6 @@ let _supabase = null;
 function getClient() {
   if (_supabase) return _supabase;
   if (typeof supabase === 'undefined') return null;
-  const SUPABASE_URL = 'https://xbvfscmtrdipmmcwxnzl.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhidmZzY210cmRpcG1tY3d4bnpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczMTE2MTgsImV4cCI6MjA5Mjg4NzYxOH0.PE3lQNLTMc6QuUMbu0_tZAnsgyxlog4kdIQTS3mITbA';
   _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   return _supabase;
 }

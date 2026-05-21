@@ -12,6 +12,7 @@ const DEFAULT_PREFS = {
   textScale: 100,
   wikiLang: 'en',
   interests: [],
+  aiEnabled: true,
 };
 
 const DEFAULT_ENGINE = {

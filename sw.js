@@ -31,6 +31,15 @@ self.addEventListener('fetch', event => {
   if (r.method !== 'GET') return;
   const url = new URL(r.url);
   if (url.origin !== location.origin) return;
+
+  // SPA fallback: /account has no static file; serve the app shell
+  if (url.pathname === '/account' || url.pathname === '/account/') {
+    event.respondWith(
+      caches.match('./index.html').then(cached => cached || fetch('./index.html')),
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(r).then(cached =>
       cached || fetch(r).then(res => {

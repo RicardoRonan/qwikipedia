@@ -94,7 +94,7 @@
         <p class="onboarding-inspiration">
           Inspired by <a href="https://xikipedia.org" target="_blank" rel="noopener">Xikipedia</a> - a clever project
           by rebane2001. I loved the idea and built Qwikipedia: my own version with a cleaner design,
-          proper accounts, multi-language support, and a few extra features I thought were missing.
+          proper accounts with full cloud sync, multi-language support, AI-enhanced search and videos, and a few extra features I thought were missing.
         </p>
         <div class="onboarding-features">
           <div class="onboarding-feature">
@@ -275,6 +275,29 @@
         </p>
       </div>
 
+      <!-- AI enhancements -->
+      <div class="settings-section" id="ai-settings-section">
+        <div class="settings-section-header">AI enhancements</div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Smart search &amp; videos</strong>
+            <span>Refine Wikipedia searches and pick better YouTube queries from article context</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="ai-enabled-toggle" checked aria-label="Enable AI enhancements" />
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </label>
+        </div>
+        <p class="settings-info-text" id="ai-status-text" aria-live="polite">
+          Checking AI helper…
+        </p>
+        <p class="settings-info-text">
+          When enabled, only the current article title and short summary are sent to your Supabase Edge Function
+          (not your full reading history). Deploy the <code>ai</code> function and set a <code>GROQ_API_KEY</code> secret—see <code>AI_SETUP.md</code>.
+          Without deployment, local heuristics still improve results.
+        </p>
+      </div>
+
       <!-- Interests -->
       <div class="settings-section">
         <div class="settings-section-header">Interests</div>
@@ -303,10 +326,11 @@
         <div class="settings-section-header">Your Data</div>
         <p class="settings-info-text">
           Your recommendation history and preferences are stored in your browser's local storage.
-          If you sign in, that state (including likes, interests, topic weights, feed history, and stats)
-          is synced to your account in Supabase so it can be restored on other devices.
+          If you sign in, your preferences, likes, saved articles, interests, topic weights, AI toggle,
+          feed history, and stats are synced to your Supabase account and restored on other devices.
         </p>
         <div class="btn-row">
+          <button class="btn-secondary" id="sync-account-btn" type="button">Sync now</button>
           <button class="btn-secondary" id="reset-algo-btn">Reset algorithm</button>
           <button class="btn-danger" id="clear-all-btn">Clear all data</button>
         </div>

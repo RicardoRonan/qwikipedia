@@ -2,14 +2,14 @@
 
 import { Storage } from './storage.js';
 import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay, inferTopics } from './engine.js';
-import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles } from './wiki.js';
+import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles, setCacheUserId } from './wiki.js';
 import { applyTheme, applyTextScale, initSettings } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
 import { showToast, showActionToast } from './toast.js';
 import { ICONS } from './icons.js';
 import { cleanWikipediaText } from './text-utils.js';
+import { bindYoutubeLinks, prefetchVisibleYoutubeQueries } from './ai.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
-import { setCacheUserId, getCachedArticles } from './wiki.js';
 import { warmArticleCache, hasCacheClient, pruneStaleCache } from './cache.js';
 
 // GSAP helper - gracefully falls back to no-op if CDN hasn't loaded yet
@@ -35,6 +35,16 @@ function flushSessionTime() {
 
 // ===== Routing (simple in-page) =====
 
+const ACCOUNT_HASH = '#account';
+
+function isAccountRoute() {
+  return location.hash === ACCOUNT_HASH || /^\/account\/?$/.test(location.pathname);
+}
+
+function basePath() {
+  return location.pathname.replace(/\/account\/?$/, '') || '/';
+}
+
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const page = document.getElementById(id);
@@ -49,10 +59,11 @@ function showPage(id) {
     navLoginBtn.classList.toggle('active', id === 'account-page');
   }
 
+  // Hash routing works on static hosts (Live Server, GitHub Pages); pathname /account 404s
   if (id === 'account-page') {
-    history.replaceState(null, '', '/account');
-  } else if (location.pathname === '/account') {
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', basePath() + location.search + ACCOUNT_HASH);
+  } else if (isAccountRoute()) {
+    history.replaceState(null, '', basePath() + location.search);
   }
 }
 
@@ -76,10 +87,6 @@ function createCard(article, featured = false) {
     ? `<div class="card-featured-badge">${ICONS.arrowRight} Today's featured article</div>`
     : '';
 
-  // YouTube search URL from article title
-  const youtubeQuery = encodeURIComponent(`${cleanWikipediaText(displayTitleRaw)} wikipedia summary`);
-  const youtubeUrl = `https://www.youtube.com/results?search_query=${youtubeQuery}`;
-
   el.innerHTML = `
     <div class="card-body">
       ${featuredBadge}
@@ -97,7 +104,7 @@ function createCard(article, featured = false) {
         </div>
       </div>
       <div class="card-youtube-row">
-        <a class="card-youtube-link" href="${escapeAttr(youtubeUrl)}" target="_blank" rel="noopener" aria-label="Watch related videos on YouTube">
+        <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(displayTitleRaw)}" aria-label="Watch related videos on YouTube">
           ${ICONS.youtube || '▶'} Watch related videos
         </a>
       </div>
@@ -454,6 +461,7 @@ function restoreFeedSession(container) {
     });
     container.innerHTML = '';
     container.appendChild(frag);
+    afterFeedCardsUpdated(container);
     attachScrollSentinel();
     return true;
   } catch {
@@ -461,9 +469,16 @@ function restoreFeedSession(container) {
   }
 }
 
+function afterFeedCardsUpdated(container) {
+  if (!container) return;
+  bindYoutubeLinks(container);
+  prefetchVisibleYoutubeQueries(container);
+}
+
 function appendUniqueArticles(container, articles = []) {
   const onScreen = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
   const likedTitles = new Set(Storage.getHistory().likedTitles || []);
+  let added = 0;
   articles.forEach(a => {
     if (!a?.title || onScreen.has(a.title)) return;
     // Exclude liked articles from the main feed
@@ -473,7 +488,9 @@ function appendUniqueArticles(container, articles = []) {
     container.appendChild(createCard(a));
     Storage.incrementStat('totalSeen');
     _sessionSeen++;
+    added++;
   });
+  if (added) afterFeedCardsUpdated(container);
 }
 
 let _backoffStatusInterval = null;
@@ -1429,9 +1446,9 @@ function renderSavedPage() {
   `;
   document.getElementById('saved-clear-btn')?.addEventListener('click', async () => {
     if (!confirm('Remove all saved articles?')) return;
-    const h = Storage.getHistory();
     Storage.setHistory({ savedTitles: [], savedArticles: [] });
     showToast('Cleared all saved articles', 'info');
+    if (currentUser) scheduleSyncPrefs(currentUser.id, 0);
     renderSavedPage();
   });
   document.getElementById('saved-feed')?.addEventListener('click', (e) => {
@@ -1440,6 +1457,7 @@ function renderSavedPage() {
     const title = btn.dataset.unsaveTitle;
     Storage.removeSaved(title);
     showToast('Removed from saved', 'info');
+    if (currentUser) scheduleSyncPrefs(currentUser.id);
     renderSavedPage();
   });
 }
@@ -1564,7 +1582,11 @@ async function init() {
       const page = btn.dataset.page;
       showPage(page);
       if (page === 'stats-page') renderStatsPage();
-      if (page === 'search-page') { const { renderSearchPage } = await import('./search.js'); renderSearchPage(); }
+      if (page === 'search-page') {
+        const { renderSearchPage, resetSearchSuggestions } = await import('./search.js');
+        resetSearchSuggestions?.();
+        renderSearchPage();
+      }
       if (page === 'saved-page') renderSavedPage();
     });
   });
@@ -1591,6 +1613,16 @@ async function init() {
   document.getElementById('auth-switch-link')?.addEventListener('click', () => {
     const form = document.getElementById('auth-form');
     setAuthModalMode(form?.dataset.mode === 'signin' ? 'signup' : 'signin');
+  });
+
+  window.addEventListener('hashchange', async () => {
+    if (location.hash === ACCOUNT_HASH) {
+      showPage('account-page');
+      const { renderAccountPage } = await import('./account.js');
+      renderAccountPage();
+    } else if (document.getElementById('account-page')?.classList.contains('active')) {
+      showPage('feed-page');
+    }
   });
 
   // Account button: go to Settings (account section) when signed in, else open auth modal
@@ -1653,12 +1685,10 @@ async function init() {
           window.reloadFeed?.();
         }
 
-        // Brand-new account (no row yet, or empty) → seed it with the local prefs we have
-        if (!profile || !profile.theme) {
-          await syncPrefsToCloud(user.id).catch(() => {});
-        }
+        // Push merged local + cloud state so likes, saved, AI toggle, and algo stay in sync
+        await syncPrefsToCloud(user.id).catch(() => {});
 
-        if (!wasSignedIn) showToast('Preferences synced from your account', 'info');
+        if (!wasSignedIn) showToast('Account synced', 'info');
 
         // Warm the Supabase article cache in the background (once per session)
         if (!_cacheWarmed && hasCacheClient()) {
@@ -1707,6 +1737,7 @@ async function init() {
   window.addEventListener('pagehide', () => {
     flushSessionTime();
     snapshotFeedSession();
+    if (currentUser) scheduleSyncPrefs(currentUser.id, 0);
   });
 
   // Restore from bfcache without re-fetching everything
@@ -1745,9 +1776,12 @@ async function init() {
   applyDecay();
 
   // Start the feed
-  const initialPage = location.pathname === '/account' ? 'account-page' : 'feed-page';
+  const initialPage = isAccountRoute() ? 'account-page' : 'feed-page';
   showPage(initialPage);
-  // If starting on /account, defer to the auth callback which handles rendering
+  if (initialPage === 'account-page') {
+    const { renderAccountPage } = await import('./account.js');
+    renderAccountPage();
+  }
   // Only auto-load feed if onboarding is already done
   if (localStorage.getItem('sw_onboarded')) {
     const restored = restoreFeedSession(document.getElementById('feed-cards'));

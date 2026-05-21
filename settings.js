@@ -8,9 +8,11 @@ import {
   getProfile,
   upsertProfile,
   scheduleSyncPrefs,
+  syncPrefsToCloud,
 } from './auth.js';
 import { fetchSummary } from './wiki.js';
 import { ICONS } from './icons.js';
+import { isAiEnabled, setAiEnabled, checkAiAvailability } from './ai.js';
 
 // Topic list mirrors the onboarding interest options
 const INTEREST_OPTIONS = [
@@ -91,6 +93,27 @@ export function initSettings() {
     if (currentTheme === 'system') applyTheme('system');
   });
 
+  const syncBtn = document.getElementById('sync-account-btn');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', async () => {
+      const user = await getCurrentUser();
+      if (!user) {
+        showToast('Sign in to sync your account', 'info');
+        window.openAuthModal?.('signin');
+        return;
+      }
+      syncBtn.disabled = true;
+      try {
+        await syncPrefsToCloud(user.id);
+        showToast('Account synced to Supabase', 'success');
+      } catch {
+        showToast('Sync failed — try again', 'error');
+      } finally {
+        syncBtn.disabled = false;
+      }
+    });
+  }
+
   // Reset algorithm button
   const resetBtn = document.getElementById('reset-algo-btn');
   if (resetBtn) {
@@ -124,6 +147,41 @@ export function initSettings() {
 
   renderAccountSection();
   renderInterestsSection();
+  initAiSettings();
+}
+
+function initAiSettings() {
+  const toggle = document.getElementById('ai-enabled-toggle');
+  const statusEl = document.getElementById('ai-status-text');
+  if (!toggle) return;
+
+  toggle.checked = isAiEnabled();
+  toggle.addEventListener('change', () => {
+    setAiEnabled(toggle.checked);
+    updateAiStatus(statusEl);
+    syncIfLoggedIn();
+  });
+
+  updateAiStatus(statusEl);
+}
+
+async function updateAiStatus(statusEl) {
+  if (!statusEl) return;
+  if (!isAiEnabled()) {
+    statusEl.textContent = 'AI enhancements are off. Local heuristics only when you use videos or search.';
+    return;
+  }
+  statusEl.textContent = 'Checking AI helper…';
+  const { available, ai, reason } = await checkAiAvailability();
+  if (!available) {
+    statusEl.textContent = 'Edge function not reachable—using local heuristics. Deploy the ai function (see AI_SETUP.md).';
+    return;
+  }
+  if (ai) {
+    statusEl.textContent = 'AI helper is online (Groq). Search and YouTube use smart queries when you click.';
+  } else {
+    statusEl.textContent = 'Edge function is up but GROQ_API_KEY is missing—using local heuristics until you add the secret.';
+  }
 }
 
 async function syncIfLoggedIn() {

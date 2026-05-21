@@ -1,1 +1,27 @@
+# Markdown
+*.md
+
+# SQL
 *.sql
+
+# Tests
+**/test/
+**/tests/
+**/__tests__/
+*.test.js
+*.test.mjs
+*.test.cjs
+*.test.ts
+*.test.tsx
+*.spec.js
+*.spec.mjs
+*.spec.cjs
+*.spec.ts
+*.spec.tsx
+**/*test*.js
+**/*test*.mjs
+**/*test*.ts
+**/*spec*.js
+**/*spec*.mjs
+**/*spec*.ts
+.ai-test-*.json

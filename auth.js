@@ -2,9 +2,7 @@
 // Replace SUPABASE_URL and SUPABASE_ANON_KEY with your project values
 
 import { Storage } from './storage.js';
-
-const SUPABASE_URL = 'https://xbvfscmtrdipmmcwxnzl.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhidmZzY210cmRpcG1tY3d4bnpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczMTE2MTgsImV4cCI6MjA5Mjg4NzYxOH0.PE3lQNLTMc6QuUMbu0_tZAnsgyxlog4kdIQTS3mITbA';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
 
 let _supabase = null;
 
@@ -169,10 +167,13 @@ export async function syncPrefsToCloud(userId) {
     text_scale: prefs.textScale,
     wiki_lang: prefs.wikiLang,
     interests: prefs.interests || [],
+    ai_enabled: prefs.aiEnabled !== false,
     topic_weights: engine.topicWeights || {},
     session_count: engine.sessionCount || 0,
     liked_titles: (history.likedTitles || []).slice(0, 300),
     liked_articles: (history.likedArticles || []).slice(0, 300),
+    saved_titles: (history.savedTitles || []).slice(0, 300),
+    saved_articles: (history.savedArticles || []).slice(0, 300),
     seen_titles: (history.seenTitles || []).slice(0, 500),
     dismissed_titles: (history.dismissedTitles || []).slice(0, 300),
     usage_stats: stats,
@@ -194,6 +195,9 @@ export async function pullPrefsFromCloud(userId) {
   if (profile.wiki_lang) prefUpdates.wikiLang = profile.wiki_lang;
   if (Array.isArray(profile.interests) && profile.interests.length > 0) {
     prefUpdates.interests = profile.interests;
+  }
+  if (typeof profile.ai_enabled === 'boolean') {
+    prefUpdates.aiEnabled = profile.ai_enabled;
   }
   if (Object.keys(prefUpdates).length) Storage.setPrefs(prefUpdates);
 
@@ -224,9 +228,18 @@ export async function pullPrefsFromCloud(userId) {
   const mergedSeen = mergeTitleLists(profile.seen_titles, h.seenTitles, 500);
   const mergedDismissed = mergeTitleLists(profile.dismissed_titles, h.dismissedTitles, 300);
 
+  const mergedSavedArticles = mergeLikedArticles(profile.saved_articles, h.savedArticles);
+  const mergedSavedTitles = mergeTitleLists(
+    profile.saved_titles,
+    [...mergedSavedArticles.map(a => a.title), ...(h.savedTitles || [])],
+    300,
+  );
+
   Storage.setHistory({
     likedArticles: mergedArticles,
     likedTitles: mergedLikedTitles,
+    savedArticles: mergedSavedArticles,
+    savedTitles: mergedSavedTitles,
     seenTitles: mergedSeen,
     dismissedTitles: mergedDismissed,
   });

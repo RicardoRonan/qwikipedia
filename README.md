@@ -32,6 +32,13 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 | `storage.js` | Single interface for all localStorage read/write |
 | `settings.js` | Theme + text scale controls, account/profile section |
 | `auth.js` | Supabase Auth: sign in, sign up, session, profile table CRUD |
+| `ai.js` | AI layer: YouTube query generation, search refinement (Edge Function + heuristics) |
+| `ai-heuristics.js` | Local fallbacks when the AI helper is offline |
+| `supabase/functions/ai/` | Supabase Edge Function (Groq) — see `AI_SETUP.md` |
+
+### AI enhancements (optional)
+
+Deploy the `ai` Edge Function with a free [Groq](https://console.groq.com) API key to refine searches and YouTube queries. Without deployment, local heuristics still improve results. See **`AI_SETUP.md`**.
 
 ## Data Sources
 
@@ -101,12 +108,15 @@ When a user is signed in, local state is kept in sync with their `profiles` row 
 | Seen / dismissed titles | `seen_titles`, `dismissed_titles` | `jsonb` |
 | Aggregate stats (seen / liked / dismissed / time) | `usage_stats` | `jsonb` |
 | Onboarding completed | `onboarded` | `boolean` |
+| AI enhancements toggle | `ai_enabled` | `boolean` |
+| Saved article titles | `saved_titles` | `jsonb` |
+| Saved article cards | `saved_articles` | `jsonb` |
 | Wikipedia username (optional) | `wikipedia_username` | `text` |
 
 **How it works:**
 
-- On `onAuthStateChange` (sign-in / session refresh) → `pullPrefsFromCloud()` fetches the row, merges values into `localStorage`, and re-applies them (theme, text scale, language, interests).
-- Whenever the user changes a preference (theme button, text-scale slider, language selector, interest chip, like/dismiss interaction), `scheduleSyncPrefs()` queues a debounced upsert (700 ms quiet window).
+- On sign-in → `pullPrefsFromCloud()` merges cloud data into `localStorage`, then `syncPrefsToCloud()` uploads the merged state (likes, saved, AI toggle, algo, stats).
+- Whenever the user changes a preference (theme, text scale, language, interests, AI toggle, like/dismiss/save), `scheduleSyncPrefs()` queues a debounced upsert (700 ms quiet window).
 - On page hide, any pending change is flushed immediately so a user closing the tab never loses pref state.
 - Topic weights are merge-only: an empty cloud row never wipes locally chosen interests.
 - Brand-new accounts (no `profiles` row yet) are seeded with the user's local prefs on first sign-in.
