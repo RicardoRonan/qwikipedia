@@ -129,3 +129,5 @@ RLS policies on `profiles` ensure users can only read/upsert their own row (`aut
 - Article history (seen / liked / dismissed titles, liked article previews, and usage stats) is **uploaded when you are signed in** so you can continue on another device. It is stored only in your own `profiles` row and subject to Supabase RLS.
 - All Wikipedia API calls go directly from your browser to Wikipedia's servers
 - If you're signed out, nothing is sent to Supabase
+
+Built by [thedevricardo](https://thedevricardo.netlify.app)
