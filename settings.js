@@ -150,6 +150,11 @@ export function initSettings() {
   initAiSettings();
 }
 
+/** Re-render the interests grid (called after cloud sync pulls new interests). */
+export function refreshInterests() {
+  renderInterestsSection();
+}
+
 function initAiSettings() {
   const toggle = document.getElementById('ai-enabled-toggle');
   const statusEl = document.getElementById('ai-status-text');

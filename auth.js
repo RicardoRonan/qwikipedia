@@ -111,6 +111,39 @@ export async function upsertProfile(userId, fields) {
   } catch {}
 }
 
+// ===== user_interests table operations =====
+
+/** Fetch all interests for a user from the dedicated table. Returns string[] of topic IDs. */
+export async function fetchUserInterests(userId) {
+  const client = getClient();
+  if (!client || !userId) return [];
+  try {
+    const { data, error } = await client
+      .from('user_interests')
+      .select('topic_id')
+      .eq('user_id', userId);
+    if (error) throw error;
+    return (data || []).map(r => r.topic_id);
+  } catch {
+    return [];
+  }
+}
+
+/** Replace all interests for a user (delete + insert in one call). */
+export async function saveUserInterests(userId, topicIds) {
+  const client = getClient();
+  if (!client || !userId) return;
+  try {
+    // Delete existing
+    await client.from('user_interests').delete().eq('user_id', userId);
+    // Insert new (skip empty)
+    if (topicIds.length > 0) {
+      const rows = topicIds.map(topic_id => ({ user_id: userId, topic_id }));
+      await client.from('user_interests').upsert(rows, { onConflict: 'user_id,topic_id' });
+    }
+  } catch {}
+}
+
 function mergeTitleLists(cloudArr, localArr, maxLen) {
   const seen = new Set();
   const out = [];
@@ -161,12 +194,16 @@ export async function syncPrefsToCloud(userId) {
   const history = Storage.getHistory();
   const stats = Storage.getStats();
   const onboarded = typeof localStorage !== 'undefined' && localStorage.getItem('sw_onboarded') === '1';
+  const interests = prefs.interests || [];
+
+  // Save interests to the dedicated table (source of truth)
+  saveUserInterests(userId, interests).catch(() => {});
 
   await upsertProfile(userId, {
     theme: prefs.theme,
     text_scale: prefs.textScale,
     wiki_lang: prefs.wikiLang,
-    interests: prefs.interests || [],
+    interests, // keep profiles in sync for backward compat
     ai_enabled: prefs.aiEnabled !== false,
     topic_weights: engine.topicWeights || {},
     session_count: engine.sessionCount || 0,
@@ -193,9 +230,18 @@ export async function pullPrefsFromCloud(userId) {
   if (profile.theme) prefUpdates.theme = profile.theme;
   if (Number.isFinite(profile.text_scale)) prefUpdates.textScale = profile.text_scale;
   if (profile.wiki_lang) prefUpdates.wikiLang = profile.wiki_lang;
-  if (Array.isArray(profile.interests) && profile.interests.length > 0) {
+
+  // Load interests from the dedicated user_interests table (source of truth)
+  const tableInterests = await fetchUserInterests(userId);
+  if (tableInterests.length > 0) {
+    prefUpdates.interests = tableInterests;
+  } else if (Array.isArray(profile.interests) && profile.interests.length > 0) {
+    // Fallback: migrate from legacy profiles.interests jsonb
     prefUpdates.interests = profile.interests;
+    // Backfill the new table so next login is fast
+    saveUserInterests(userId, profile.interests).catch(() => {});
   }
+
   if (typeof profile.ai_enabled === 'boolean') {
     prefUpdates.aiEnabled = profile.ai_enabled;
   }

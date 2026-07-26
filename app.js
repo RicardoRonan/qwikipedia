@@ -3,7 +3,7 @@
 import { Storage } from './storage.js';
 import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay, inferTopics } from './engine.js';
 import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles, setCacheUserId } from './wiki.js';
-import { applyTheme, applyTextScale, initSettings } from './settings.js';
+import { applyTheme, applyTextScale, initSettings, refreshInterests } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
 import { showToast, showActionToast } from './toast.js';
 import { ICONS } from './icons.js';
@@ -20,6 +20,7 @@ function gsap() { return window.gsap || null; }
 let isLoading = false;
 let currentUser = null;
 let scrollObserver = null;
+let prefetchObserver = null;
 
 // Session tracking
 const _sessionStart = Date.now();
@@ -69,6 +70,34 @@ function showPage(id) {
 }
 
 // ===== Card rendering =====
+
+const SKELETON_COUNT = 5;
+
+function showSkeletonCards(container) {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < SKELETON_COUNT; i++) {
+    const card = document.createElement('div');
+    card.className = 'skeleton-card';
+    card.setAttribute('aria-hidden', 'true');
+    card.innerHTML = `
+      <div class="skeleton-image"></div>
+      <div class="skeleton-title" style="width: ${70 + Math.random() * 20}%"></div>
+      <div class="skeleton-excerpt" style="width: 100%"></div>
+      <div class="skeleton-excerpt" style="width: ${80 + Math.random() * 15}%"></div>
+      <div class="skeleton-excerpt" style="width: ${50 + Math.random() * 25}%"></div>
+      <div class="skeleton-actions">
+        <div class="skeleton-pill"></div>
+        <div class="skeleton-pill"></div>
+      </div>
+    `;
+    frag.appendChild(card);
+  }
+  container.appendChild(frag);
+}
+
+function removeSkeletonCards(container) {
+  container.querySelectorAll('.skeleton-card').forEach(el => el.remove());
+}
 
 function createCard(article, featured = false) {
   const el = document.createElement('div');
@@ -351,13 +380,17 @@ function animateSave(cardEl, saveBtn, article) {
 // ===== Feed loading =====
 
 const BATCH_SIZE       = 10;  // articles rendered per batch
-const SENTINEL_FROM_END = 2;  // cards from the very bottom; small so it must scroll into view
+const SENTINEL_FROM_END = 4;  // cards from the bottom; higher = more lead time for fast readers
 const AUTOLOAD_COOLDOWN_MS = 1200;
 /** Pre-fetch when sentinel is within this many px below the viewport bottom */
-const INFINITE_SCROLL_ROOT_MARGIN_PX = 240;
+const INFINITE_SCROLL_ROOT_MARGIN_PX = 400;
 /** Cap on auto-chained underfill loads after a full reload (prevents short-page loops) */
 const UNDERFILL_MAX_CHAIN = 2;
 let _underfillChain = 0;
+/** Prefetch triggers this many cards before the load sentinel - fires earlier so data is ready */
+const PREFETCH_FROM_END = 5;
+/** rootMargin for the prefetch sentinel - much larger than the load sentinel's 240px */
+const PREFETCH_ROOT_MARGIN_PX = 600;
 
 // Single in-flight prefetch promise - prevents duplicate background fetches
 let _prefetchPromise = null;
@@ -475,6 +508,7 @@ function restoreFeedSession(container) {
     container.appendChild(frag);
     afterFeedCardsUpdated(container);
     attachScrollSentinel();
+    attachPrefetchSentinel();
     return true;
   } catch {
     return false;
@@ -550,6 +584,7 @@ function silentBackgroundRefresh(container, lang) {
 function appendCachedThenRefresh(container, cached, lang) {
   appendUniqueArticles(container, cached);
   attachScrollSentinel();
+  attachPrefetchSentinel();
   silentBackgroundRefresh(container, lang);
 }
 
@@ -565,6 +600,7 @@ function renderCachedThenRefresh(container, cached, lang) {
 
   // Infinite scroll armed right away - no waiting
   attachScrollSentinel();
+  attachPrefetchSentinel();
 
   silentBackgroundRefresh(container, lang);
 
@@ -595,6 +631,7 @@ async function loadFeed(append = false) {
 
   // Disconnect the observer immediately so it cannot fire again while we load
   if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
+  if (prefetchObserver) { prefetchObserver.disconnect(); prefetchObserver = null; }
 
   const container  = document.getElementById('feed-cards');
   const loadMoreBtn = document.getElementById('load-more-btn');
@@ -650,7 +687,7 @@ async function loadFeed(append = false) {
     // visible - re-arm the sentinel after the cooldown so scrolling resumes.
     if (hasExistingFeed || append) {
       isLoading = false;
-      setTimeout(() => { if (!isLoading) attachScrollSentinel(); }, backoffMs + 250);
+      setTimeout(() => { if (!isLoading) { attachScrollSentinel(); attachPrefetchSentinel(); } }, backoffMs + 250);
       return;
     }
   }
@@ -661,7 +698,10 @@ async function loadFeed(append = false) {
 
   setFeedLoadingPct(0);
 
-  if (!append && !hasExistingFeed && !hasPrefetch) container.innerHTML = '';
+  if (!append && !hasExistingFeed && !hasPrefetch) {
+    container.innerHTML = '';
+    showSkeletonCards(container);
+  }
 
   let gotArticles = false;
   try {
@@ -726,12 +766,13 @@ async function loadFeed(append = false) {
           return loadFeed(append);
         }
       }
-      if (!append && !hasExistingFeed) showEmptyState(container);
+      if (!append && !hasExistingFeed) { removeSkeletonCards(container); showEmptyState(container); }
       if (!append && hasExistingFeed) showToast('No new articles right now - pull to refresh', 'info');
       if (append) showEndOfFeed(container);
     } else {
       if (!append) {
         // Atomic swap to prevent blank flash on reload.
+        removeSkeletonCards(container);
         container.innerHTML = '';
         if (featured) container.appendChild(createCard(featured, true));
         appendUniqueArticles(container, articles);
@@ -740,7 +781,7 @@ async function loadFeed(append = false) {
       }
     }
   } catch (err) {
-    if (!append && !hasExistingFeed) showErrorState(container);
+    if (!append && !hasExistingFeed) { removeSkeletonCards(container); showErrorState(container); }
     if (!append && hasExistingFeed) showToast('Reload failed - keeping current feed', 'error');
     console.error('Feed load error:', err);
     if (loadingHint) {
@@ -765,6 +806,7 @@ async function loadFeed(append = false) {
     setTimeout(() => {
       if (!isLoading) {
         attachScrollSentinel();
+        attachPrefetchSentinel();
         startPrefetch(lang);
       }
     }, tailBackoffMs + 200);
@@ -773,6 +815,7 @@ async function loadFeed(append = false) {
 
   // Attach new sentinel AFTER loading is fully done
   attachScrollSentinel();
+  attachPrefetchSentinel();
 
   // Start prefetching the NEXT batch in the background - only one at a time
   startPrefetch(lang);
@@ -853,6 +896,53 @@ function attachScrollSentinel() {
       },
     );
     scrollObserver.observe(sentinel);
+  }, 120);
+}
+
+/** Place a higher sentinel that triggers prefetching well before the load sentinel.
+ *  This ensures the next batch is being fetched while the user is still reading. */
+function attachPrefetchSentinel() {
+  const container = document.getElementById('feed-cards');
+  if (!container) return;
+
+  container.querySelector('.prefetch-sentinel')?.remove();
+  if (prefetchObserver) { prefetchObserver.disconnect(); prefetchObserver = null; }
+
+  const cards = container.querySelectorAll('.card');
+  if (cards.length === 0) return;
+
+  const back       = Math.min(PREFETCH_FROM_END, cards.length - 1);
+  const targetCard = cards[cards.length - 1 - back];
+  const sentinel   = document.createElement('div');
+  sentinel.className  = 'prefetch-sentinel';
+  sentinel.style.cssText = 'height:1px;pointer-events:none;';
+  targetCard.insertAdjacentElement('afterend', sentinel);
+
+  const lang = Storage.getPrefs().wikiLang || 'en';
+  let armed = false;
+
+  setTimeout(() => {
+    if (isLoading) return;
+    prefetchObserver = new IntersectionObserver(
+      (entries) => {
+        const isIntersecting = entries[0].isIntersecting;
+
+        if (!armed) {
+          if (!isIntersecting) armed = true;
+          return;
+        }
+
+        if (!isIntersecting || isLoading) return;
+
+        startPrefetch(lang);
+      },
+      {
+        root: null,
+        rootMargin: `0px 0px ${PREFETCH_ROOT_MARGIN_PX}px 0px`,
+        threshold: 0,
+      },
+    );
+    prefetchObserver.observe(sentinel);
   }, 120);
 }
 
@@ -1689,6 +1779,7 @@ async function init() {
         const refreshedPrefs = Storage.getPrefs();
         applyTheme(refreshedPrefs.theme);
         applyTextScale(refreshedPrefs.textScale);
+        refreshInterests();
 
         // Reflect pulled language in the selector and reload the feed if it changed
         const langSelect = document.getElementById('wiki-lang-select');
