@@ -1016,18 +1016,28 @@ function setAuthModalMode(mode) {
   if (!form) return;
   form.dataset.mode = mode;
 
+  const displayNameGroup = document.getElementById('auth-display-name-group');
+  const displayNameInput = document.getElementById('auth-display-name');
+  const passwordInput = document.getElementById('auth-password');
+
   if (mode === 'signin') {
     if (title) title.textContent = 'Sign in';
     if (subtitle) subtitle.textContent = 'Sync your preferences across devices';
     if (submitBtn) submitBtn.textContent = 'Sign in';
     if (switchText) switchText.textContent = "Don't have an account?";
     if (switchLink) switchLink.textContent = 'Sign up';
+    if (displayNameGroup) displayNameGroup.hidden = true;
+    if (displayNameInput) displayNameInput.required = false;
+    if (passwordInput) passwordInput.autocomplete = 'current-password';
   } else {
     if (title) title.textContent = 'Create account';
     if (subtitle) subtitle.textContent = 'Your feed stays on your device - this just syncs preferences';
     if (submitBtn) submitBtn.textContent = 'Create account';
     if (switchText) switchText.textContent = 'Already have an account?';
     if (switchLink) switchLink.textContent = 'Sign in';
+    if (displayNameGroup) displayNameGroup.hidden = false;
+    if (displayNameInput) displayNameInput.required = true;
+    if (passwordInput) passwordInput.autocomplete = 'new-password';
   }
 }
 
@@ -1037,10 +1047,18 @@ async function handleAuthSubmit(e) {
   const mode = form.dataset.mode;
   const email = document.getElementById('auth-email')?.value?.trim();
   const password = document.getElementById('auth-password')?.value;
+  const displayName = document.getElementById('auth-display-name')?.value?.trim();
   const errorEl = document.getElementById('auth-error');
   const submitBtn = document.getElementById('auth-submit-btn');
 
   if (!email || !password) return;
+  if (mode === 'signup' && (!displayName || displayName.length < 2)) {
+    if (errorEl) {
+      errorEl.textContent = 'Display name must be at least 2 characters';
+      errorEl.classList.add('visible');
+    }
+    return;
+  }
 
   if (errorEl) errorEl.classList.remove('visible');
   if (submitBtn) submitBtn.textContent = 'Please wait…';
@@ -1050,7 +1068,7 @@ async function handleAuthSubmit(e) {
     if (mode === 'signin') {
       await signIn(email, password);
     } else {
-      await signUp(email, password);
+      await signUp(email, password, displayName);
     }
     closeAuthModal();
     showToast(mode === 'signin' ? 'Signed in successfully' : 'Account created - welcome!', 'success');

@@ -32,10 +32,12 @@ export async function getCurrentUser() {
   return session?.user || null;
 }
 
-export async function signUp(email, password) {
+export async function signUp(email, password, displayName) {
   const client = getClient();
   if (!client) throw new Error('Auth not available');
-  const { data, error } = await client.auth.signUp({ email, password });
+  const name = String(displayName || '').trim();
+  const options = name ? { data: { display_name: name } } : {};
+  const { data, error } = await client.auth.signUp({ email, password, options });
   if (error) throw error;
   return data.user;
 }

@@ -1744,6 +1744,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 @media (max-width: 768px) {
   /* ---- shadcn-style bottom tab bar on mobile / small tablets ---- */
   #nav {
+    z-index: 300;
     top: auto;
     left: 0;
     right: 0;

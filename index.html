@@ -406,6 +406,18 @@
       <form class="auth-form" id="auth-form" data-mode="signin" novalidate>
         <div class="auth-error" id="auth-error" role="alert"></div>
 
+        <div class="input-group" id="auth-display-name-group" hidden>
+          <label class="input-label" for="auth-display-name">Display name</label>
+          <input
+            class="input-field"
+            id="auth-display-name"
+            type="text"
+            placeholder="Your name"
+            autocomplete="name"
+            minlength="2"
+          />
+        </div>
+
         <div class="input-group">
           <label class="input-label" for="auth-email">Email</label>
           <input
