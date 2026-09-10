@@ -12,7 +12,9 @@ import {
 } from './auth.js';
 import { fetchSummary } from './wiki.js';
 import { ICONS } from './icons.js';
+import { escapeHtml } from './text-utils.js';
 import { isAiEnabled, setAiEnabled, checkAiAvailability } from './ai.js';
+import { setButtonLoading } from './ui.js';
 
 // Topic list mirrors the onboarding interest options
 const INTEREST_OPTIONS = [
@@ -102,14 +104,14 @@ export function initSettings() {
         window.openAuthModal?.('signin');
         return;
       }
-      syncBtn.disabled = true;
+      setButtonLoading(syncBtn, true);
       try {
         await syncPrefsToCloud(user.id);
         showToast('Account synced to Supabase', 'success');
       } catch {
-        showToast('Sync failed — try again', 'error');
+        showToast('Sync failed. Try again', 'error');
       } finally {
-        syncBtn.disabled = false;
+        setButtonLoading(syncBtn, false, 'Sync now');
       }
     });
   }
@@ -119,11 +121,16 @@ export function initSettings() {
   if (resetBtn) {
     resetBtn.addEventListener('click', async () => {
       if (confirm('Reset your recommendation history? This cannot be undone.')) {
-        Storage.reset();
-        showToast('Algorithm reset - your feed starts fresh', 'info');
-        const user = await getCurrentUser();
-        if (user) scheduleSyncPrefs(user.id, 0);
-        renderLikesSection();
+        setButtonLoading(resetBtn, true);
+        try {
+          Storage.reset();
+          showToast('Algorithm reset - your feed starts fresh', 'info');
+          const user = await getCurrentUser();
+          if (user) scheduleSyncPrefs(user.id, 0);
+          renderLikesSection();
+        } finally {
+          setButtonLoading(resetBtn, false, 'Reset algorithm');
+        }
       }
     });
   }
@@ -133,14 +140,19 @@ export function initSettings() {
   if (clearBtn) {
     clearBtn.addEventListener('click', async () => {
       if (confirm('Delete ALL local data including preferences? This cannot be undone.')) {
-        Storage.resetAll();
-        applyTheme('system');
-        applyTextScale(100);
-        showToast('All data cleared', 'info');
-        renderAccountSection();
-        renderLikesSection();
-        const user = await getCurrentUser();
-        if (user) scheduleSyncPrefs(user.id, 0);
+        setButtonLoading(clearBtn, true);
+        try {
+          Storage.resetAll();
+          applyTheme('system');
+          applyTextScale(100);
+          showToast('All data cleared', 'info');
+          renderAccountSection();
+          renderLikesSection();
+          const user = await getCurrentUser();
+          if (user) scheduleSyncPrefs(user.id, 0);
+        } finally {
+          setButtonLoading(clearBtn, false, 'Clear all data');
+        }
       }
     });
   }
@@ -273,7 +285,7 @@ export async function renderAccountSection() {
           <strong>Not signed in</strong>
           <span>Sign in to sync your preferences across devices</span>
         </div>
-        <button class="btn-primary" id="open-auth-btn">Sign in</button>
+        <button class="btn-primary" id="open-auth-btn" data-action="open-auth"><span class="btn-label">Sign in</span></button>
       </div>
     `;
     document.getElementById('open-auth-btn')?.addEventListener('click', () => {
@@ -293,22 +305,21 @@ export async function renderAccountSection() {
       </div>
       <button class="btn-secondary" id="sign-out-btn">Sign out</button>
     </div>
-    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:10px;">
+    <div class="settings-row settings-row--stack-sm">
       <div class="input-group">
-        <label class="input-label" for="wiki-username-input">Wikipedia username <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
-        <div style="display:flex;gap:8px;width:100%;">
+        <label class="input-label" for="wiki-username-input">Wikipedia username <span class="label-optional">(optional)</span></label>
+        <div class="input-row">
           <input
             class="input-field"
             id="wiki-username-input"
             type="text"
             placeholder="e.g. YourWikipediaName"
             value="${profile?.wikipedia_username || ''}"
-            style="flex:1"
           />
-          <button class="btn-primary" id="save-wiki-username" style="white-space:nowrap;padding:9px 14px;">Save</button>
+          <button class="btn-primary btn-compact" id="save-wiki-username"><span class="btn-label">Save</span></button>
         </div>
       </div>
-      ${profile?.wikipedia_username ? `<a href="https://en.wikipedia.org/wiki/User:${encodeURIComponent(profile.wikipedia_username)}" target="_blank" rel="noopener" style="font-size:var(--fs-sm)">View your Wikipedia profile →</a>` : ''}
+      ${profile?.wikipedia_username ? `<a href="https://en.wikipedia.org/wiki/User:${encodeURIComponent(profile.wikipedia_username)}" target="_blank" rel="noopener" class="wiki-profile-link">View your Wikipedia profile →</a>` : ''}
     </div>
   `;
 
@@ -321,10 +332,17 @@ export async function renderAccountSection() {
 
   document.getElementById('save-wiki-username')?.addEventListener('click', async () => {
     const val = document.getElementById('wiki-username-input')?.value?.trim();
-    if (val !== undefined) {
+    const btn = document.getElementById('save-wiki-username');
+    if (val === undefined) return;
+    setButtonLoading(btn, true);
+    try {
       await upsertProfile(user.id, { wikipedia_username: val });
       showToast('Wikipedia username saved', 'success');
       renderAccountSection();
+    } catch (err) {
+      showToast(err?.message || 'Could not save Wikipedia username', 'error');
+    } finally {
+      setButtonLoading(btn, false, 'Save');
     }
   });
 }
@@ -338,12 +356,6 @@ let _likesQuery = '';
 const _likesSummaryCache = new Map();
 /** In-flight fetch promises, deduped per title. */
 const _likesPending = new Map();
-
-function escapeHtml(s = '') {
-  return s.replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
 /** Render the "Your likes" section - only visible when signed in. */
 export async function renderLikesSection() {
@@ -431,7 +443,7 @@ export async function renderLikesSection() {
 
 function cssEscape(value) {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
-  return String(value).replace(/["\\\n]/g, c => '\\' + c);
+  return String(value).replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~\n]/g, c => '\\' + c);
 }
 
 function renderLikeCardHtml(title, article, lang) {
@@ -443,7 +455,7 @@ function renderLikeCardHtml(title, article, lang) {
 
   const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
   const thumb = image
-    ? `<div class="like-card-thumb" style="background-image:url('${escapeHtml(image)}')" aria-hidden="true"></div>`
+    ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeHtml(image)}')" aria-hidden="true"></div>`
     : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
 
   const extractHtml = extract
@@ -490,7 +502,7 @@ function bindLikesEvents() {
       const all = Storage.getHistory().likedTitles || [];
       if (!all.length) return;
       if (!confirm(`Remove all ${all.length} liked article${all.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
-      Storage.setHistory({ likedTitles: [] });
+      Storage.setHistory({ likedTitles: [], likedArticles: [] });
       const user = await getCurrentUser();
       if (user) scheduleSyncPrefs(user.id, 0);
       _likesSummaryCache.clear();

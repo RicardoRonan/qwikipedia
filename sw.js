@@ -1,11 +1,12 @@
 /** App-shell cache - same-origin static assets load fast/offline after first visit */
-const SHELL_CACHE = 'qwikipedia-shell-v1';
+const SHELL_CACHE = 'qwikipedia-shell-v2';
 const API_CACHE   = 'qwikipedia-api-v1';
 const CORE = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './ui.js',
   './wiki.js',
   './engine.js',
   './storage.js',
@@ -37,7 +38,7 @@ self.addEventListener('activate', event => {
 const WIKI_SUMMARY_RE   = /^https:\/\/.+\.wikipedia\.org\/api\/rest_v1\/page\/summary\//;
 const WIKI_FEATURED_RE  = /^https:\/\/.+\.wikipedia\.org\/api\/rest_v1\/feed\/featured\//;
 const WIKI_ACTION_RE    = /^https:\/\/.+\.wikipedia\.org\/w\/api\.php/;
-const WIKI_THUMB_RE     = /^https:\/\/.+\.wikipedia\.org\/(thumb\/)? specials\/FilePath\//;
+const WIKI_THUMB_RE     = /^https:\/\/.+\.wikipedia\.org\/(thumb\/)?Special:FilePath\//;
 const WIKI_UPLOAD_RE    = /^https:\/\/upload\.wikimedia\.org\//;
 
 const DAY  = 86400000;
@@ -46,7 +47,7 @@ const HOUR = 3600000;
 // ── Caching strategies ─────────────────────────────────────────────────
 
 /** Stale-while-revalidate: serve cached response instantly, fetch fresh in bg. */
-async function staleWhileRevalidate(request, cacheName, maxAgeMs) {
+async function staleWhileRevalidate(request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
 

@@ -13,22 +13,22 @@ export function usePullToRefresh({
   let startTime = 0;
   let dy = 0;
   const label = indicator.querySelector('.ptr-label');
-  const spinner = indicator.querySelector('svg');
 
   const setIndicator = (distance) => {
     const progress = Math.min(distance / threshold, 1);
     const offset = Math.min(distance, threshold + 20);
-    indicator.style.transform = `translateX(-50%) translateY(${offset}px)`;
-    indicator.style.opacity = String(progress);
-    if (spinner) spinner.style.transform = `rotate(${progress * 220}deg)`;
+    indicator.style.setProperty('--ptr-offset', `${offset}px`);
+    indicator.style.setProperty('--ptr-progress', String(progress));
+    indicator.style.setProperty('--ptr-rotate', `${progress * 220}deg`);
     if (label) label.textContent = progress >= 1 ? 'Release to refresh' : 'Pull to refresh';
   };
 
   const resetIndicator = () => {
-    indicator.style.transition = 'transform 220ms ease, opacity 220ms ease';
-    indicator.style.transform = 'translateX(-50%) translateY(0)';
-    indicator.style.opacity = '0';
-    setTimeout(() => { indicator.style.transition = ''; }, 230);
+    indicator.classList.add('is-resetting');
+    indicator.style.setProperty('--ptr-offset', '0px');
+    indicator.style.setProperty('--ptr-progress', '0');
+    indicator.style.setProperty('--ptr-rotate', '0deg');
+    setTimeout(() => { indicator.classList.remove('is-resetting'); }, 230);
   };
 
   const onStart = (e) => {
@@ -38,7 +38,7 @@ export function usePullToRefresh({
     startTime = Date.now();
     dy = 0;
     pulling = true;
-    indicator.style.transition = 'none';
+    indicator.classList.remove('is-resetting');
   };
 
   const onMove = (e) => {

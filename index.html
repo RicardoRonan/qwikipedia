@@ -119,7 +119,7 @@
             </div>
           </div>
         </div>
-        <button class="btn-primary onboarding-next" id="step-1-next" style="width:100%;margin-top:8px;">
+        <button class="btn-primary onboarding-next" id="step-1-next">
           Pick your interests →
         </button>
       </div>
@@ -129,7 +129,7 @@
         <h2 class="onboarding-step-title">What are you into?</h2>
         <p class="onboarding-step-sub">Pick a few topics to seed your feed. You can always change this later by interacting with articles.</p>
         <div id="interest-grid" role="group" aria-label="Interest topics"></div>
-        <button class="btn-primary onboarding-next" id="step-2-next" style="width:100%;margin-top:20px;" disabled>
+        <button class="btn-primary onboarding-next onboarding-next--lg" id="step-2-next" disabled>
           Start reading
         </button>
       </div>
@@ -148,14 +148,33 @@
 
     <!-- ===== Feed Page ===== -->
     <section id="feed-page" class="page active" aria-label="Article feed">
-      <div id="feed-loading-hint" role="status" aria-live="polite" aria-atomic="true" aria-busy="true" style="display:none;">
-        <svg class="loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
-        </svg>
-        <div class="feed-loading-text">
-          <span id="feed-loading-pct" class="feed-loading-pct">0%</span>
-          <span id="feed-loading-label" class="feed-loading-label">Loading articles</span>
-        </div>
+      <h1 class="sr-only">Feed</h1>
+      <div class="quick-actions">
+        <button class="quick-action-btn" data-page="search-page" aria-label="Search articles">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span class="quick-action-label">Search</span>
+        </button>
+        <button class="quick-action-btn" data-page="saved-page" aria-label="View saved articles">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          <span class="quick-action-label">Saved</span>
+        </button>
+        <button class="quick-action-btn" id="quick-refresh-btn" aria-label="Refresh feed">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span class="quick-action-label">Refresh</span>
+        </button>
+      </div>
+      <div id="welcome-back" class="welcome-back" hidden aria-live="polite"></div>
+      <div id="feed-loading-hint" class="is-hidden" role="status" aria-live="polite" aria-atomic="true">
+        <div
+          id="feed-loading-bar"
+          class="feed-loading-bar"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+          aria-label="Loading articles"
+        ></div>
+        <span id="feed-loading-label" class="sr-only">Loading articles</span>
       </div>
       <div id="feed-cards" aria-live="polite" aria-label="Feed articles"></div>
       <button id="load-more-btn" class="sr-only" aria-label="Load more articles">Load more articles</button>
@@ -223,14 +242,14 @@
           </div>
         </div>
 
-        <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:12px;">
+        <div class="settings-row settings-row--stack">
           <div class="settings-row-label">
             <strong>Text size</strong>
             <span>Adjust the size of all text</span>
           </div>
           <div class="slider-wrapper">
             <div class="slider-row">
-              <span style="font-size:var(--fs-xs);color:var(--text-muted);">A</span>
+              <span class="slider-scale-mark slider-scale-mark--sm">A</span>
               <input
                 type="range"
                 id="text-scale-slider"
@@ -240,7 +259,7 @@
                 value="100"
                 aria-label="Text size percentage"
               />
-              <span style="font-size:var(--fs-lg);color:var(--text-muted);">A</span>
+              <span class="slider-scale-mark slider-scale-mark--lg">A</span>
               <span id="text-scale-label" aria-live="polite">100%</span>
             </div>
             <p class="slider-preview">The quick brown fox jumps over the lazy dog.</p>
@@ -256,7 +275,7 @@
             <strong>Language</strong>
             <span>Which Wikipedia to fetch articles from</span>
           </div>
-          <select class="input-field" id="wiki-lang-select" style="max-width:160px;" aria-label="Wikipedia language">
+          <select class="input-field select-narrow" id="wiki-lang-select" aria-label="Wikipedia language">
             <option value="en">English</option>
             <option value="simple">Simple English</option>
             <option value="fr">Français</option>
@@ -301,11 +320,11 @@
       <!-- Interests -->
       <div class="settings-section">
         <div class="settings-section-header">Interests</div>
-        <p class="settings-info-text" style="margin-bottom:14px;">
+        <p class="settings-info-text settings-info-text--lead">
           Toggle topics on or off to tune your feed. Active topics get a boost in recommendations.
         </p>
         <div id="interests-grid" role="group" aria-label="Manage interests"></div>
-        <p class="settings-info-text" style="margin-top:12px;" id="interests-status" aria-live="polite"></p>
+        <p class="settings-info-text settings-info-text--status" id="interests-status" aria-live="polite"></p>
       </div>
 
       <!-- Account -->
@@ -330,9 +349,9 @@
           feed history, and stats are synced to your Supabase account and restored on other devices.
         </p>
         <div class="btn-row">
-          <button class="btn-secondary" id="sync-account-btn" type="button">Sync now</button>
-          <button class="btn-secondary" id="reset-algo-btn">Reset algorithm</button>
-          <button class="btn-danger" id="clear-all-btn">Clear all data</button>
+          <button class="btn-secondary" id="sync-account-btn" type="button"><span class="btn-label">Sync now</span></button>
+          <button class="btn-secondary" id="reset-algo-btn"><span class="btn-label">Reset algorithm</span></button>
+          <button class="btn-danger" id="clear-all-btn"><span class="btn-label">Clear all data</span></button>
         </div>
       </div>
 
@@ -362,20 +381,20 @@
         <h1>Search</h1>
         <p>Find articles on Wikipedia</p>
       </div>
-      <div id="search-form" style="padding:16px;display:flex;gap:8px;">
+      <div id="search-form">
         <input
           type="search"
           id="search-input"
           class="input-field"
           placeholder="Search Wikipedia…"
           aria-label="Search Wikipedia"
-          style="flex:1;"
           autocomplete="off"
         />
-        <button class="btn-primary" id="search-submit-btn" type="button">Search</button>
+        <button class="btn-primary" id="search-submit-btn" type="button"><span class="btn-label">Search</span></button>
       </div>
       <div id="search-results" aria-live="polite">
         <div class="state-box">
+          <h3>Search Wikipedia</h3>
           <p>Search for articles to get started.</p>
         </div>
       </div>
@@ -389,10 +408,47 @@
       </div>
       <div id="saved-content" aria-live="polite">
         <div class="state-box">
-          <p>No saved articles yet. Tap the bookmark icon on any card to save it here.</p>
+          <h3>No saved articles yet</h3>
+          <p>Tap the bookmark icon on any card to save it here.</p>
         </div>
       </div>
     </section>
+
+    <footer class="app-footer">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <img src="Qwikipedia%20logo.png" alt="Qwikipedia" class="footer-logo" />
+          <p class="footer-tagline">Wikipedia, but it learns what you like.</p>
+        </div>
+
+        <div class="footer-links">
+          <div class="footer-section">
+            <h4>Product</h4>
+            <a href="#" data-page="feed-page">Feed</a>
+            <a href="#" data-page="search-page">Search</a>
+            <a href="#" data-page="saved-page">Saved</a>
+            <a href="#" data-page="stats-page">Stats</a>
+          </div>
+
+          <div class="footer-section">
+            <h4>Account</h4>
+            <a href="#" data-page="settings-page">Settings</a>
+            <a href="#" id="footer-signin-link">Sign In</a>
+          </div>
+
+          <div class="footer-section">
+            <h4>Legal</h4>
+            <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>
+            <a href="https://www.mediawiki.org/wiki/API:Main_page" target="_blank" rel="noopener">MediaWiki API</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <p>Built by <a href="https://thedevricardo.netlify.app" target="_blank" rel="noopener">thedevricardo</a></p>
+        <p>Data stays on your device. <a href="#" data-page="settings-page">Learn more</a></p>
+      </div>
+    </footer>
 
   </main>
 
@@ -432,18 +488,24 @@
 
         <div class="input-group">
           <label class="input-label" for="auth-password">Password</label>
-          <input
-            class="input-field"
-            id="auth-password"
-            type="password"
-            placeholder="••••••••"
-            autocomplete="current-password"
-            required
-            minlength="6"
-          />
+          <div class="password-field-wrap">
+            <input
+              class="input-field"
+              id="auth-password"
+              type="password"
+              placeholder="••••••••"
+              autocomplete="current-password"
+              required
+              minlength="6"
+            />
+            <button type="button" class="password-toggle" id="password-toggle" aria-label="Show password">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <a href="#" class="forgot-password-link" id="forgot-password-link">Forgot password?</a>
         </div>
 
-        <button class="btn-primary" id="auth-submit-btn" type="submit" style="width:100%">Sign in</button>
+        <button class="btn-primary btn-block" id="auth-submit-btn" type="submit"><span class="btn-label">Sign in</span></button>
       </form>
 
       <p class="auth-switch">

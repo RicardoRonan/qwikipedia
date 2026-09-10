@@ -15,31 +15,17 @@ export function showActionToast(message, actionLabel, onAction, durationMs = 500
   if (!container) return null;
   let dismissed = false;
   const toast = document.createElement('div');
-  toast.className = 'toast toast-info';
-  toast.style.display = 'flex';
-  toast.style.alignItems = 'center';
-  toast.style.gap = '10px';
-  toast.style.cursor = 'default';
+  toast.className = 'toast toast-info toast--action';
 
   const msgSpan = document.createElement('span');
-  msgSpan.style.flex = '1';
+  msgSpan.className = 'toast__msg';
   msgSpan.textContent = message;
   toast.appendChild(msgSpan);
 
   const actionBtn = document.createElement('button');
+  actionBtn.className = 'toast__action';
+  actionBtn.type = 'button';
   actionBtn.textContent = actionLabel;
-  actionBtn.style.cssText = `
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--secondary);
-    color: var(--foreground);
-    cursor: pointer;
-    white-space: nowrap;
-    flex-shrink: 0;
-  `;
   actionBtn.addEventListener('click', () => {
     dismissed = true;
     toast.remove();

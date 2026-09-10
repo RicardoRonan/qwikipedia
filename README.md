@@ -27,6 +27,7 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 | `index.html` | App shell, nav, settings page markup, auth modal |
 | `styles.css` | All styles: light/dark themes, typography scale, layout |
 | `app.js` | Bootstrap, feed rendering, routing, auth modal logic |
+| `ui.js` | Shared loading, empty/error, and button-state helpers |
 | `engine.js` | Recommendation engine: weights, interaction recording, feed batch |
 | `wiki.js` | Wikipedia API adapters (REST summary, search, random, featured) |
 | `storage.js` | Single interface for all localStorage read/write |

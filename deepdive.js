@@ -1,4 +1,4 @@
-import { cleanWikipediaText } from './text-utils.js';
+import { cleanWikipediaText, escapeHtml } from './text-utils.js';
 
 const enc = (s) => encodeURIComponent(s);
 
@@ -234,12 +234,4 @@ export function toggleDeepDive(button, cardEl, topic = '') {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => panel.classList.add('is-open'));
   });
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

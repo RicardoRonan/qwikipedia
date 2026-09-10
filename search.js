@@ -1,8 +1,9 @@
 import { searchTitles, fetchSummaryBatch } from './wiki.js';
 import { Storage } from './storage.js';
-import { cleanWikipediaText } from './text-utils.js';
+import { cleanWikipediaText, escapeHtml, escapeAttr } from './text-utils.js';
 import { ICONS } from './icons.js';
 import { refineSearchQuery, getSearchSuggestions, isAiEnabled, bindYoutubeLinks } from './ai.js';
+import { stateBox, skeletonCardsHtml, setBusy } from './ui.js';
 
 let _suggestionsLoaded = false;
 
@@ -35,19 +36,64 @@ export async function renderSearchPage() {
     <button type="button" class="search-suggestion-chip" data-query="${escapeAttr(s.query)}">${escapeHtml(s.label)}</button>
   `).join('');
 
-  container.innerHTML = `
-    <div class="state-box search-empty-state">
-      <p>Search for articles on Wikipedia.</p>
-      ${isAiEnabled() ? '<p class="search-ai-hint">AI can refine vague queries and improve video search when the edge helper is deployed.</p>' : ''}
-      ${chips ? `<div class="search-suggestions" role="group" aria-label="Suggested searches">${chips}</div>` : ''}
-    </div>
-  `;
+  container.innerHTML = stateBox({
+    icon: ICONS.search,
+    title: 'Search Wikipedia',
+    body: 'Search for articles to get started.',
+    extra: `${isAiEnabled() ? '<p class="search-ai-hint">AI can refine vague queries and improve video search when the edge helper is deployed.</p>' : ''}
+      ${chips ? `<div class="search-suggestions" role="group" aria-label="Suggested searches">${chips}</div>` : ''}`,
+  });
+  container.querySelector('.state-box')?.classList.add('search-empty-state');
 
   container.querySelectorAll('.search-suggestion-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const input = document.getElementById('search-input');
       if (input) input.value = chip.dataset.query || '';
       doSearch(chip.dataset.query || '');
+    });
+  });
+
+  renderRecentSearches(container);
+}
+
+function getRecentSearches() {
+  try {
+    return JSON.parse(localStorage.getItem('qwikipedia_recent_searches') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function addRecentSearch(query) {
+  const q = String(query || '').trim();
+  if (!q) return;
+  const searches = getRecentSearches().filter(s => s !== q);
+  searches.unshift(q);
+  if (searches.length > 10) searches.pop();
+  try {
+    localStorage.setItem('qwikipedia_recent_searches', JSON.stringify(searches));
+  } catch { /* quota / private mode */ }
+}
+
+function renderRecentSearches(container) {
+  const searches = getRecentSearches();
+  if (!container || searches.length === 0) return;
+
+  const html = `
+    <div class="recent-searches">
+      <div class="recent-searches-header">Recent searches</div>
+      ${searches.map(s => `
+        <button type="button" class="recent-search-item" data-query="${escapeAttr(s)}">${escapeHtml(s)}</button>
+      `).join('')}
+    </div>
+  `;
+  container.insertAdjacentHTML('beforeend', html);
+
+  container.querySelectorAll('.recent-search-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const input = document.getElementById('search-input');
+      if (input) input.value = item.dataset.query || '';
+      doSearch(item.dataset.query || '');
     });
   });
 }
@@ -58,8 +104,12 @@ export async function doSearch(query, opts = {}) {
   if (!container || !query?.trim()) return;
 
   const rawQuery = query.trim();
+  if (!opts.retried) addRecentSearch(rawQuery);
   let searchQuery = rawQuery;
   let refinedNote = '';
+
+  container.innerHTML = `<div class="card-list" aria-busy="true">${skeletonCardsHtml()}</div>`;
+  setBusy(container, true);
 
   if (isAiEnabled() && !opts.skipRefine) {
     const { query: refined, source } = await refineSearchQuery(rawQuery);
@@ -70,13 +120,6 @@ export async function doSearch(query, opts = {}) {
         : `Searched for “${escapeHtml(refined)}”`;
     }
   }
-
-  container.innerHTML = `
-    <div class="state-box">
-      <div class="loading-spinner" style="width:24px;height:24px;margin:0 auto 12px;border:2px solid var(--border);border-top-color:var(--foreground);border-radius:50%;animation:spin 0.9s linear infinite;"></div>
-      <p>Searching…</p>
-    </div>
-  `;
 
   const lang = Storage.getPrefs().wikiLang || 'en';
   try {
@@ -95,21 +138,23 @@ export async function doSearch(query, opts = {}) {
     }
 
     if (!titles.length) {
-      container.innerHTML = `
-        <div class="state-box">
-          <p>No results found for "${escapeHtml(rawQuery)}". Try different keywords.</p>
-        </div>
-      `;
+      container.innerHTML = stateBox({
+        icon: ICONS.search,
+        title: 'No articles found',
+        body: `No results found for “${escapeHtml(rawQuery)}”. Try different keywords.`,
+      });
+      setBusy(container, false);
       return;
     }
 
     const articles = await fetchSummaryBatch(titles, lang, { includeCategories: true });
     if (!articles.length) {
-      container.innerHTML = `
-        <div class="state-box">
-          <p>No readable articles found for "${escapeHtml(rawQuery)}".</p>
-        </div>
-      `;
+      container.innerHTML = stateBox({
+        icon: ICONS.inbox,
+        title: 'No articles found',
+        body: `No readable articles found for “${escapeHtml(rawQuery)}”.`,
+      });
+      setBusy(container, false);
       return;
     }
 
@@ -117,8 +162,10 @@ export async function doSearch(query, opts = {}) {
       ? `<p class="search-refined-note">${refinedNote}</p>`
       : '';
 
+    const countLabel = `${articles.length} result${articles.length !== 1 ? 's' : ''} found`;
     container.innerHTML = `
       ${noteHtml}
+      <div class="search-result-count" role="status">${countLabel}</div>
       <div id="search-card-feed" class="card-list"></div>
     `;
     const feed = document.getElementById('search-card-feed');
@@ -126,13 +173,15 @@ export async function doSearch(query, opts = {}) {
       feed.appendChild(createSearchCard(a));
     });
     bindYoutubeLinks(feed);
+    setBusy(container, false);
   } catch (err) {
-    container.innerHTML = `
-      <div class="state-box">
-        <p>Search failed. Check your connection and try again.</p>
-        <button class="btn-primary" style="margin-top:12px;" onclick="document.getElementById('search-submit-btn')?.click()">Retry</button>
-      </div>
-    `;
+    container.innerHTML = stateBox({
+      icon: ICONS.alertCircle,
+      title: 'Search failed',
+      body: 'Check your connection and try again.',
+      action: { label: 'Try again', action: 'retry-search' },
+    });
+    setBusy(container, false);
   }
 }
 
@@ -144,7 +193,7 @@ function createSearchCard(article) {
   const displayTitle = article.displayTitle || article.title || '';
   const safeUrl = article.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.title)}`;
   const imageHtml = article.image
-    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitle)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitle)}" loading="lazy" onerror="this.parentElement.classList.add('is-hidden')"></div>`
     : '';
   el.innerHTML = `
     <div class="card-body">
@@ -162,12 +211,4 @@ function createSearchCard(article) {
     </div>
   `;
   return el;
-}
-
-function escapeHtml(s = '') {
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function escapeAttr(s = '') {
-  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

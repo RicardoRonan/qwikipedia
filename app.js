@@ -1,17 +1,27 @@
 // app.js - main bootstrapper, feed rendering, routing
 
 import { Storage } from './storage.js';
-import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay, inferTopics } from './engine.js';
+import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay } from './engine.js';
 import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles, setCacheUserId } from './wiki.js';
 import { applyTheme, applyTextScale, initSettings, refreshInterests } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
-import { showToast, showActionToast } from './toast.js';
+import { showToast } from './toast.js';
 import { ICONS } from './icons.js';
-import { cleanWikipediaText } from './text-utils.js';
+import { cleanWikipediaText, escapeHtml, escapeAttr } from './text-utils.js';
 import { bindYoutubeLinks, prefetchVisibleYoutubeQueries } from './ai.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
 import { warmArticleCache, hasCacheClient, pruneStaleCache } from './cache.js';
 import { toggleDeepDive } from './deepdive.js';
+import {
+  setHidden,
+  setBusy,
+  setButtonLoading,
+  setButtonLabel,
+  stateBox,
+  showSkeletonCards,
+  removeSkeletonCards,
+  bindAppActions,
+} from './ui.js';
 
 // GSAP helper - gracefully falls back to no-op if CDN hasn't loaded yet
 function gsap() { return window.gsap || null; }
@@ -47,18 +57,33 @@ function basePath() {
   return location.pathname.replace(/\/account\/?$/, '') || '/';
 }
 
+const PAGE_TITLES = {
+  'feed-page': 'Feed',
+  'search-page': 'Search',
+  'saved-page': 'Saved',
+  'stats-page': 'Stats',
+  'settings-page': 'Settings',
+  'account-page': 'Account',
+};
+
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const page = document.getElementById(id);
   if (page) page.classList.add('active');
 
   document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.page === id);
+    const active = btn.dataset.page === id;
+    btn.classList.toggle('active', active);
+    if (active) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
   });
 
   const navLoginBtn = document.getElementById('nav-login-btn');
   if (navLoginBtn) {
-    navLoginBtn.classList.toggle('active', id === 'account-page');
+    const accountActive = id === 'account-page';
+    navLoginBtn.classList.toggle('active', accountActive);
+    if (accountActive) navLoginBtn.setAttribute('aria-current', 'page');
+    else navLoginBtn.removeAttribute('aria-current');
   }
 
   // Hash routing works on static hosts (Live Server, GitHub Pages); pathname /account 404s
@@ -67,37 +92,61 @@ function showPage(id) {
   } else if (isAccountRoute()) {
     history.replaceState(null, '', basePath() + location.search);
   }
+
+  document.title = PAGE_TITLES[id] ? `${PAGE_TITLES[id]} · Qwikipedia` : 'Qwikipedia';
+  window.scrollTo(0, 0);
+
+  const heading = page?.querySelector('h1');
+  if (heading) {
+    if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+    heading.focus({ preventScroll: true });
+  } else if (page) {
+    page.setAttribute('tabindex', '-1');
+    page.focus({ preventScroll: true });
+  }
+}
+
+async function goToPage(id) {
+  showPage(id);
+  if (id === 'stats-page') renderStatsPage();
+  if (id === 'search-page') {
+    const { renderSearchPage, resetSearchSuggestions } = await import('./search.js');
+    resetSearchSuggestions?.();
+    renderSearchPage();
+  }
+  if (id === 'saved-page') renderSavedPage();
+  if (id === 'account-page') {
+    const { renderAccountPage } = await import('./account.js');
+    renderAccountPage();
+  }
+}
+
+function showWelcomeBack() {
+  const el = document.getElementById('welcome-back');
+  if (!el) return;
+
+  const stats = Storage.getStats();
+  const totalTimeMs = stats.totalTimeMs || 0;
+  const totalLiked = stats.totalLiked || 0;
+
+  if (totalTimeMs <= 0 && totalLiked <= 0) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+
+  const timeStr = totalTimeMs >= 3600000
+    ? `${Math.floor(totalTimeMs / 3600000)}h`
+    : `${Math.floor(totalTimeMs / 60000)}m`;
+  const likedLabel = totalLiked === 1 ? 'article' : 'articles';
+
+  el.innerHTML = `
+    <p>Welcome back! You've spent <strong>${timeStr}</strong> reading and liked <strong>${totalLiked}</strong> ${likedLabel}.</p>
+  `;
+  el.hidden = false;
 }
 
 // ===== Card rendering =====
-
-const SKELETON_COUNT = 5;
-
-function showSkeletonCards(container) {
-  const frag = document.createDocumentFragment();
-  for (let i = 0; i < SKELETON_COUNT; i++) {
-    const card = document.createElement('div');
-    card.className = 'skeleton-card';
-    card.setAttribute('aria-hidden', 'true');
-    card.innerHTML = `
-      <div class="skeleton-image"></div>
-      <div class="skeleton-title" style="width: ${70 + Math.random() * 20}%"></div>
-      <div class="skeleton-excerpt" style="width: 100%"></div>
-      <div class="skeleton-excerpt" style="width: ${80 + Math.random() * 15}%"></div>
-      <div class="skeleton-excerpt" style="width: ${50 + Math.random() * 25}%"></div>
-      <div class="skeleton-actions">
-        <div class="skeleton-pill"></div>
-        <div class="skeleton-pill"></div>
-      </div>
-    `;
-    frag.appendChild(card);
-  }
-  container.appendChild(frag);
-}
-
-function removeSkeletonCards(container) {
-  container.querySelectorAll('.skeleton-card').forEach(el => el.remove());
-}
 
 function createCard(article, featured = false) {
   const el = document.createElement('div');
@@ -110,7 +159,7 @@ function createCard(article, featured = false) {
   const displayTitleRaw = article.displayTitle || article.title || '';
   const safeUrl = article.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.title)}`;
   const imageHtml = article.image
-    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitleRaw)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+    ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitleRaw)}" loading="lazy" onerror="this.parentElement.classList.add('is-hidden')"></div>`
     : ``;
 
   const featuredBadge = featured
@@ -278,7 +327,6 @@ function animateLike(cardEl, likeBtn, article) {
     likeBtn.classList.add('liked');
     showToast('Added to likes', 'success');
   }
-  updateNavStats();
   if (currentUser) scheduleSyncPrefs(currentUser.id);
   // Refresh the likes section on the settings page (no-op if not yet rendered)
   import('./settings.js').then(m => m.renderLikesSection?.()).catch(() => {});
@@ -288,66 +336,25 @@ function animateLike(cardEl, likeBtn, article) {
   }
 }
 
-const _undoQueue = new Map();
-
 function animateDismiss(cardEl, article) {
   const g = gsap();
-  // Save the card HTML and article data for potential undo
-  const articleTitle = article.title;
-  const cardHtml = cardEl.outerHTML;
 
-  const doRemove = () => {
-    recordInteraction(article, 'dislike');
-    Storage.incrementStat('totalDismissed');
-    _sessionDismissed++;
-    updateNavStats();
-    if (currentUser) scheduleSyncPrefs(currentUser.id);
-    cardEl.remove();
-    _undoQueue.delete(articleTitle);
-  };
-
-  const undoRemove = () => {
-    // Remove the dismissed article from history (undo the weight changes)
-    const engine = Storage.getEngine();
-    const topics = inferTopics(article);
-    const weights = { ...engine.topicWeights };
-    topics.forEach(t => {
-      weights[t] = (weights[t] || 0) + 3; // reverse the -3 dislike
-    });
-    Storage.setEngine({ topicWeights: weights, sessionCount: (engine.sessionCount || 0) });
-    // Remove from dismissed titles
-    const history = Storage.getHistory();
-    history.dismissedTitles = (history.dismissedTitles || []).filter(t => t !== articleTitle);
-    Storage.setHistory({ dismissedTitles: history.dismissedTitles });
-    // Restore the card
-    if (cardEl.parentNode) {
-      cardEl.style.display = '';
-      cardEl.style.opacity = '';
-      cardEl.style.transform = '';
-    } else {
-      const container = document.getElementById('feed-cards');
-      if (container) container.insertBefore(cardEl, container.firstChild);
-    }
-    _undoQueue.delete(articleTitle);
-    if (currentUser) scheduleSyncPrefs(currentUser.id);
-  };
-
-  _undoQueue.set(articleTitle, { article, cardHtml, undoRemove });
-
-  // Record as seen (not dismissed yet) during the undo window
-  Storage.addSeen(articleTitle);
+  recordInteraction(article, 'dislike');
+  Storage.incrementStat('totalDismissed');
+  _sessionDismissed++;
+  if (currentUser) scheduleSyncPrefs(currentUser.id);
 
   if (g) {
     g.to(cardEl, {
       opacity: 0, x: -20, duration: 0.22, ease: 'power2.in',
       onComplete: () => {
-        cardEl.style.display = 'none';
-        showActionToast('Article dismissed', 'Undo', undoRemove);
+        cardEl.remove();
+        showToast('Article dismissed', 'info');
       },
     });
   } else {
-    cardEl.style.display = 'none';
-    showActionToast('Article dismissed', 'Undo', undoRemove);
+    cardEl.remove();
+    showToast('Article dismissed', 'info');
   }
 }
 
@@ -417,10 +424,23 @@ function consumePrefetch() {
   return p; // caller awaits this
 }
 
+function setFeedHintVisible(visible) {
+  const hint = document.getElementById('feed-loading-hint');
+  if (!hint) return;
+  setHidden(hint, !visible);
+  setBusy(hint, visible);
+}
+
 function setFeedLoadingPct(value) {
   const n = Math.min(100, Math.max(0, Math.round(value)));
-  const el = document.getElementById('feed-loading-pct');
-  if (el) el.textContent = `${n}%`;
+  const bar = document.getElementById('feed-loading-bar');
+  const hint = document.getElementById('feed-loading-hint');
+  if (!bar) return;
+  const visible = hint && !hint.classList.contains('is-hidden');
+  // Keep a visible sliver while loading so the top line appears immediately
+  const visual = n === 0 && visible ? 8 : n;
+  bar.style.width = `${visual}%`;
+  bar.setAttribute('aria-valuenow', String(n));
 }
 
 /** Build a serializable article from what's currently rendered on a card (for session restore). */
@@ -509,6 +529,7 @@ function restoreFeedSession(container) {
     afterFeedCardsUpdated(container);
     attachScrollSentinel();
     attachPrefetchSentinel();
+    showWelcomeBack();
     return true;
   } catch {
     return false;
@@ -552,7 +573,7 @@ function refreshLoadingStatus() {
   if (remaining > 250) {
     const hasCards = !!document.querySelector('#feed-cards .card');
     if (hasCards && hintEl) {
-      hintEl.style.display = 'none';
+      setFeedHintVisible(false);
       return;
     }
     labelEl.textContent = `Easing off Wikipedia for ${Math.ceil(remaining / 1000)}s…`;
@@ -593,9 +614,7 @@ function renderCachedThenRefresh(container, cached, lang) {
   container.innerHTML = '';
   appendUniqueArticles(container, cached);
 
-  // Hide any leftover loading hint - cached articles are visible now.
-  const hint = document.getElementById('feed-loading-hint');
-  if (hint) hint.style.display = 'none';
+  setFeedHintVisible(false);
   stopLoadingStatusPolling();
 
   // Infinite scroll armed right away - no waiting
@@ -603,6 +622,7 @@ function renderCachedThenRefresh(container, cached, lang) {
   attachPrefetchSentinel();
 
   silentBackgroundRefresh(container, lang);
+  showWelcomeBack();
 
   // Featured card (silent, no blocking) - also gated on backoff
   if (getApiBackoffRemainingMs() <= 1000) getFeaturedCard(lang).then(featured => {
@@ -635,9 +655,20 @@ async function loadFeed(append = false) {
 
   const container  = document.getElementById('feed-cards');
   const loadMoreBtn = document.getElementById('load-more-btn');
-  const loadingHint = document.getElementById('feed-loading-hint');
   const loadingLabel = document.getElementById('feed-loading-label');
   const lang = Storage.getPrefs().wikiLang || 'en';
+  const refreshBtn = document.getElementById('quick-refresh-btn');
+
+  try {
+    await runLoadFeed(append, { container, loadMoreBtn, loadingLabel, lang, refreshBtn });
+  } finally {
+    isLoading = false;
+    setButtonLoading(refreshBtn, false);
+    setButtonLoading(loadMoreBtn, false);
+  }
+}
+
+async function runLoadFeed(append, { container, loadMoreBtn, loadingLabel, lang, refreshBtn }) {
 
   // Full reload should not compete with a background prefetch
   if (!append) {
@@ -661,13 +692,11 @@ async function loadFeed(append = false) {
 
   if (!append && !hasExistingFeed && !hasPrefetch && cachedAvailable.length >= 4) {
     renderCachedThenRefresh(container, cachedAvailable, lang);
-    isLoading = false;
     return;
   }
 
   if (append && !hasPrefetch && cachedAvailable.length >= 4) {
     appendCachedThenRefresh(container, cachedAvailable, lang);
-    isLoading = false;
     return;
   }
 
@@ -680,20 +709,20 @@ async function loadFeed(append = false) {
   if (backoffMs > 1000) {
     if (cachedAvailable.length > 0) {
       appendCachedThenRefresh(container, cachedAvailable, lang);
-      isLoading = false;
       return;
     }
     // No cache to fall back on. If there are already cards on screen, do nothing
     // visible - re-arm the sentinel after the cooldown so scrolling resumes.
     if (hasExistingFeed || append) {
-      isLoading = false;
       setTimeout(() => { if (!isLoading) { attachScrollSentinel(); attachPrefetchSentinel(); } }, backoffMs + 250);
       return;
     }
   }
 
-  if (loadMoreBtn) loadMoreBtn.disabled = true;
-  if (loadingHint) loadingHint.style.display = '';
+  if (loadMoreBtn) setButtonLoading(loadMoreBtn, true, 'Load more articles');
+  if (!append) setButtonLoading(refreshBtn, true);
+  setFeedHintVisible(true);
+  setBusy(container, true);
   startLoadingStatusPolling(append ? 'Loading more articles' : 'Loading articles');
 
   setFeedLoadingPct(0);
@@ -756,13 +785,12 @@ async function loadFeed(append = false) {
           _didSeenRecovery = true;
           Storage.setHistory({ seenTitles: (history.seenTitles || []).slice(0, 50) });
           showToast('Refreshing your feed history…', 'info');
-          isLoading = false;
-          if (loadMoreBtn) { loadMoreBtn.disabled = false; loadMoreBtn.textContent = 'Load more articles'; }
-          if (loadingHint) {
-            loadingHint.style.display = 'none';
-            setFeedLoadingPct(0);
-          }
+          if (loadMoreBtn) setButtonLoading(loadMoreBtn, false, 'Load more articles');
+          setFeedHintVisible(false);
+          setFeedLoadingPct(0);
           stopLoadingStatusPolling();
+          setBusy(container, false);
+          isLoading = false;
           return loadFeed(append);
         }
       }
@@ -780,23 +808,21 @@ async function loadFeed(append = false) {
         appendUniqueArticles(container, articles);
       }
     }
+    if (!append) showWelcomeBack();
   } catch (err) {
     if (!append && !hasExistingFeed) { removeSkeletonCards(container); showErrorState(container); }
     if (!append && hasExistingFeed) showToast('Reload failed - keeping current feed', 'error');
+    if (!append) showWelcomeBack();
     console.error('Feed load error:', err);
-    if (loadingHint) {
-      loadingHint.style.display = 'none';
-      setFeedLoadingPct(0);
-    }
-  }
-
-  isLoading = false;
-  stopLoadingStatusPolling();
-  if (loadMoreBtn) { loadMoreBtn.disabled = false; loadMoreBtn.textContent = 'Load more articles'; }
-  if (loadingHint) {
-    loadingHint.style.display = 'none';
+    setFeedHintVisible(false);
     setFeedLoadingPct(0);
   }
+
+  stopLoadingStatusPolling();
+  if (loadMoreBtn) setButtonLoading(loadMoreBtn, false, 'Load more articles');
+  setFeedHintVisible(false);
+  setFeedLoadingPct(0);
+  setBusy(container, false);
   if (loadingLabel) loadingLabel.textContent = _loadingLabelDefault;
   snapshotFeedSession();
 
@@ -965,44 +991,54 @@ function showEndOfFeed(container) {
 }
 
 function showEmptyState(container) {
-  container.innerHTML = `
-    <div class="state-box">
-      <div class="state-icon">${ICONS.inbox}</div>
-      <h3>No articles found</h3>
-      <p>Wikipedia may be temporarily unreachable, or you've seen all available articles in your feed.</p>
-      <button class="btn-primary" style="margin-top:16px" onclick="window.reloadFeed?.()">Try again</button>
-    </div>
-  `;
+  container.innerHTML = stateBox({
+    icon: ICONS.inbox,
+    title: 'No articles found',
+    body: 'Wikipedia may be temporarily unreachable, or you\'ve seen all available articles in your feed.',
+    action: { label: 'Try again', action: 'retry-feed' },
+  });
 }
 
 function showErrorState(container) {
-  container.innerHTML = `
-    <div class="state-box">
-      <div class="state-icon">${ICONS.alertCircle}</div>
-      <h3>Couldn't load articles</h3>
-      <p>Check your internet connection and try again. Make sure you're opening this via a web server, not directly from a file.</p>
-      <button class="btn-primary" style="margin-top:16px" onclick="window.reloadFeed?.()">Retry</button>
-    </div>
-  `;
-}
-
-function updateNavStats() {
-  // Nav stat display removed; stats are on the Stats page
+  container.innerHTML = stateBox({
+    icon: ICONS.alertCircle,
+    title: 'Couldn\'t load articles',
+    body: 'Check your internet connection and try again. Make sure you\'re opening this via a web server, not directly from a file.',
+    action: { label: 'Try again', action: 'retry-feed' },
+  });
 }
 
 // ===== Auth Modal =====
 
+function resetPasswordVisibility() {
+  const passwordInput = document.getElementById('auth-password');
+  const passwordToggle = document.getElementById('password-toggle');
+  if (passwordInput) passwordInput.type = 'password';
+  if (passwordToggle) {
+    passwordToggle.setAttribute('aria-label', 'Show password');
+    passwordToggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  }
+}
+
+let _authTrigger = null;
+
 function openAuthModal(mode = 'signin') {
   const overlay = document.getElementById('auth-modal-overlay');
   if (overlay) {
+    _authTrigger = document.activeElement;
     overlay.classList.add('open');
+    resetPasswordVisibility();
     setAuthModalMode(mode);
+    setTimeout(() => document.getElementById('auth-email')?.focus(), 0);
   }
 }
 
 function closeAuthModal() {
   const overlay = document.getElementById('auth-modal-overlay');
   if (overlay) overlay.classList.remove('open');
+  const trigger = _authTrigger;
+  _authTrigger = null;
+  trigger?.focus?.();
 }
 
 function setAuthModalMode(mode) {
@@ -1023,21 +1059,25 @@ function setAuthModalMode(mode) {
   if (mode === 'signin') {
     if (title) title.textContent = 'Sign in';
     if (subtitle) subtitle.textContent = 'Sync your preferences across devices';
-    if (submitBtn) submitBtn.textContent = 'Sign in';
+    if (submitBtn) setButtonLabel(submitBtn, 'Sign in');
     if (switchText) switchText.textContent = "Don't have an account?";
     if (switchLink) switchLink.textContent = 'Sign up';
     if (displayNameGroup) displayNameGroup.hidden = true;
     if (displayNameInput) displayNameInput.required = false;
     if (passwordInput) passwordInput.autocomplete = 'current-password';
+    const forgotLink = document.getElementById('forgot-password-link');
+    if (forgotLink) forgotLink.hidden = false;
   } else {
     if (title) title.textContent = 'Create account';
     if (subtitle) subtitle.textContent = 'Your feed stays on your device - this just syncs preferences';
-    if (submitBtn) submitBtn.textContent = 'Create account';
+    if (submitBtn) setButtonLabel(submitBtn, 'Create account');
     if (switchText) switchText.textContent = 'Already have an account?';
     if (switchLink) switchLink.textContent = 'Sign in';
     if (displayNameGroup) displayNameGroup.hidden = false;
     if (displayNameInput) displayNameInput.required = true;
     if (passwordInput) passwordInput.autocomplete = 'new-password';
+    const forgotLink = document.getElementById('forgot-password-link');
+    if (forgotLink) forgotLink.hidden = true;
   }
 }
 
@@ -1061,7 +1101,7 @@ async function handleAuthSubmit(e) {
   }
 
   if (errorEl) errorEl.classList.remove('visible');
-  if (submitBtn) submitBtn.textContent = 'Please wait…';
+  setButtonLoading(submitBtn, true);
 
   try {
     const { signIn, signUp } = await import('./auth.js');
@@ -1078,6 +1118,7 @@ async function handleAuthSubmit(e) {
       errorEl.classList.add('visible');
     }
   } finally {
+    setButtonLoading(submitBtn, false);
     if (submitBtn) setAuthModalMode(mode);
   }
 }
@@ -1093,13 +1134,16 @@ function initLightbox() {
   if (!lb) return;
 
   let currentSrc = '';
+  let _lightboxTrigger = null;
 
   function openLightbox(src, alt) {
     currentSrc = src;
+    _lightboxTrigger = document.activeElement;
     lbImg.src = src;
     lbImg.alt = alt;
     if (lbCaption) lbCaption.textContent = alt;
     lb.classList.add('open');
+    lbClose?.focus();
 
     const g = gsap();
     if (g) {
@@ -1116,6 +1160,9 @@ function initLightbox() {
       lbImg.src = '';
       currentSrc = '';
       document.body.style.overflow = '';
+      const trigger = _lightboxTrigger;
+      _lightboxTrigger = null;
+      trigger?.focus?.();
     };
     if (g) {
       g.to(lb, { opacity: 0, duration: 0.18, ease: 'power2.in', onComplete: done });
@@ -1387,6 +1434,7 @@ function countUp(el, target, duration = 0.8) {
 function renderStatsPage() {
   const totals = Storage.getStats();
   const history = Storage.getHistory();
+  const lang = Storage.getPrefs().wikiLang || 'en';
   const engine = Storage.getEngine();
 
   const sessionTimeSec = Math.floor(getSessionTimeMs() / 1000);
@@ -1431,7 +1479,7 @@ function renderStatsPage() {
       <div class="topic-bar-row">
         <span class="topic-bar-label">${topic}</span>
         <div class="topic-bar-track">
-          <div class="topic-bar-fill ${positive ? 'positive' : 'negative'}" style="width:${pct}%"></div>
+          <div class="topic-bar-fill ${positive ? 'positive' : 'negative'}" style="--bar-w:${pct}%"></div>
         </div>
         <span class="topic-bar-value">${weight > 0 ? '+' : ''}${weight.toFixed(1)}</span>
       </div>
@@ -1453,7 +1501,7 @@ function renderStatsPage() {
   const likedHtml = history.likedTitles.length
     ? history.likedTitles.slice(0, 50).map(title => `
         <div class="liked-post-row" data-title="${escapeAttr(title)}">
-          <a class="liked-post-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(title)}" target="_blank" rel="noopener">
+          <a class="liked-post-link" href="https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}" target="_blank" rel="noopener">
             <span class="liked-post-title">${escapeHtml(title)}</span>
             ${ICONS.externalLink}
           </a>
@@ -1489,32 +1537,6 @@ function renderStatsPage() {
     </div>
   `;
 
-  // Unlike button handler - remove from liked list and re-render
-  container.addEventListener('click', e => {
-    const btn = e.target.closest('[data-unlike]');
-    if (!btn) return;
-    const title = btn.dataset.unlike;
-    const row = btn.closest('.liked-post-row');
-    const g = gsap();
-
-    const doRemove = () => {
-      Storage.removeLiked(title);
-      // Also nudge the engine weight down slightly
-      const eng = Storage.getEngine();
-      const weights = { ...eng.topicWeights };
-      Storage.setEngine({ topicWeights: weights });
-      if (currentUser) scheduleSyncPrefs(currentUser.id);
-      showToast(`Unliked "${title}"`, 'info');
-      renderStatsPage();
-    };
-
-    if (g && row) {
-      g.to(row, { opacity: 0, x: 20, duration: 0.2, ease: 'power2.in', onComplete: doRemove });
-    } else {
-      doRemove();
-    }
-  });
-
   // Count-up animation for numeric stats
   container.querySelectorAll('[data-stat-session]').forEach(el => {
     const i = Number(el.dataset.statSession);
@@ -1544,17 +1566,17 @@ function renderSavedPage() {
   if (!container) return;
   const { savedTitles, savedArticles } = Storage.getHistory();
   if (!savedTitles.length) {
-    container.innerHTML = `
-      <div class="state-box">
-        <p>No saved articles yet. Tap the bookmark icon on any card to save it here.</p>
-      </div>
-    `;
+    container.innerHTML = stateBox({
+      icon: ICONS.bookmark,
+      title: 'No saved articles yet',
+      body: 'Tap the bookmark icon on any card to save it here.',
+    });
     return;
   }
   const lang = Storage.getPrefs().wikiLang || 'en';
   container.innerHTML = `
-    <div class="likes-toolbar" style="padding:12px 16px;">
-      <span style="font-size:var(--fs-sm);color:var(--muted-foreground);">${savedTitles.length} saved</span>
+    <div class="likes-toolbar">
+      <span class="saved-count">${savedTitles.length} saved</span>
       <button class="btn-secondary likes-clear-btn" id="saved-clear-btn" type="button">Clear all</button>
     </div>
     <div class="likes-feed" id="saved-feed">
@@ -1590,13 +1612,13 @@ function renderSavedCardHtml(title, article, lang) {
   const extract = article?.extract;
   const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
   const thumb = image
-    ? `<div class="like-card-thumb" style="background-image:url('${escapeHtml(image)}')" aria-hidden="true"></div>`
+    ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeAttr(image)}')" aria-hidden="true"></div>`
     : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
   return `
     <div class="like-card">
       ${thumb}
       <div class="like-card-body">
-        <a class="like-card-title" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(display)}</a>
+        <a class="like-card-title" href="${escapeAttr(url)}" target="_blank" rel="noopener">${escapeHtml(display)}</a>
         <p class="like-card-extract">${extract ? escapeHtml(extract) : ''}</p>
         <div class="like-card-actions">
           <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${ICONS.externalLink || ''} Open</a>
@@ -1685,30 +1707,50 @@ async function init() {
     navigator.serviceWorker.register(`${new URL('./sw.js', import.meta.url)}`).catch(() => {});
   }
 
-  // Expose helpers to window for inline handlers
+  // Expose helpers for data-action delegation
   window.openAuthModal = openAuthModal;
   window.showPage = showPage;
   window.reloadFeed = () => {
+    if (isLoading) return;
     clearApiBackoff();
     _prefetchPromise = null;
     _prefetchLang = null;
     return loadFeed(false);
   };
+  bindAppActions();
 
   // Nav routing (page buttons)
   document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
-      const page = btn.dataset.page;
-      showPage(page);
-      if (page === 'stats-page') renderStatsPage();
-      if (page === 'search-page') {
-        const { renderSearchPage, resetSearchSuggestions } = await import('./search.js');
-        resetSearchSuggestions?.();
-        renderSearchPage();
-      }
-      if (page === 'saved-page') renderSavedPage();
+      await goToPage(btn.dataset.page);
     });
+  });
+
+  document.querySelectorAll('.quick-action-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => goToPage(btn.dataset.page));
+  });
+
+  document.getElementById('quick-refresh-btn')?.addEventListener('click', () => {
+    window.reloadFeed?.();
+  });
+
+  document.querySelectorAll('.app-footer a[data-page]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      goToPage(link.dataset.page);
+      window.scrollTo(0, 0);
+    });
+  });
+
+  document.getElementById('footer-signin-link')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (currentUser) {
+      await goToPage('account-page');
+      window.scrollTo(0, 0);
+    } else {
+      openAuthModal('signin');
+    }
   });
 
   // Logo: go to feed if on another page, or reload feed if already there
@@ -1719,8 +1761,6 @@ async function init() {
       loadFeed(false);
     } else {
       showPage('feed-page');
-      document.querySelectorAll('.nav-btn[data-page]').forEach(b => b.classList.remove('active'));
-      document.querySelector('.nav-btn[data-page="feed-page"]')?.classList.add('active');
     }
   });
 
@@ -1729,10 +1769,60 @@ async function init() {
   document.getElementById('auth-modal-overlay')?.addEventListener('click', e => {
     if (e.target === e.currentTarget) closeAuthModal();
   });
+  document.addEventListener('keydown', (e) => {
+    const overlay = document.getElementById('auth-modal-overlay');
+    if (!overlay?.classList.contains('open')) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeAuthModal();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const focusable = [...overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter(el => !el.hidden && !el.disabled && el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
   document.getElementById('auth-form')?.addEventListener('submit', handleAuthSubmit);
   document.getElementById('auth-switch-link')?.addEventListener('click', () => {
     const form = document.getElementById('auth-form');
     setAuthModalMode(form?.dataset.mode === 'signin' ? 'signup' : 'signin');
+  });
+
+  const passwordToggle = document.getElementById('password-toggle');
+  const passwordInput = document.getElementById('auth-password');
+  passwordToggle?.addEventListener('click', () => {
+    if (!passwordInput) return;
+    const isPassword = passwordInput.type === 'password';
+    passwordInput.type = isPassword ? 'text' : 'password';
+    passwordToggle.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+    passwordToggle.innerHTML = isPassword
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  });
+
+  document.getElementById('forgot-password-link')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email')?.value?.trim();
+    if (!email || !email.includes('@')) {
+      showToast('Enter your email first', 'info');
+      return;
+    }
+    try {
+      const { sendPasswordReset } = await import('./auth.js');
+      await sendPasswordReset(email);
+      showToast('Password reset email sent - check your inbox', 'success');
+    } catch (err) {
+      showToast(err?.message || 'Could not send reset email', 'error');
+    }
   });
 
   window.addEventListener('hashchange', async () => {
@@ -1763,10 +1853,16 @@ async function init() {
 
   // Search - submit on button click or Enter key
   document.getElementById('search-submit-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('search-submit-btn');
     const { renderSearchPage, doSearch } = await import('./search.js');
     const input = document.getElementById('search-input');
-    if (input?.value?.trim()) await doSearch(input.value.trim());
-    else renderSearchPage();
+    setButtonLoading(btn, true);
+    try {
+      if (input?.value?.trim()) await doSearch(input.value.trim());
+      else await renderSearchPage();
+    } finally {
+      setButtonLoading(btn, false);
+    }
   });
   document.getElementById('search-input')?.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
@@ -1884,6 +1980,30 @@ async function init() {
   // Click-to-expand delegation for card extracts
   initExtractClickDelegation();
 
+  document.getElementById('stats-content')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-unlike]');
+    if (!btn) return;
+    const title = btn.dataset.unlike;
+    const row = btn.closest('.liked-post-row');
+    const g = window.gsap || null;
+
+    const doRemove = () => {
+      Storage.removeLiked(title);
+      const eng = Storage.getEngine();
+      const weights = { ...eng.topicWeights };
+      Storage.setEngine({ topicWeights: weights });
+      if (currentUser) scheduleSyncPrefs(currentUser.id);
+      showToast(`Unliked "${title}"`, 'info');
+      renderStatsPage();
+    };
+
+    if (g && row) {
+      g.to(row, { opacity: 0, x: 20, duration: 0.2, ease: 'power2.in', onComplete: doRemove });
+    } else {
+      doRemove();
+    }
+  });
+
   // Pull-to-refresh
   initPullToRefresh();
 
@@ -1909,7 +2029,6 @@ async function init() {
     if (!restored) await loadFeed(false);
     else startPrefetch(Storage.getPrefs().wikiLang || 'en');
   }
-  updateNavStats();
 }
 
 function updateNavUser(user) {
@@ -1917,44 +2036,28 @@ function updateNavUser(user) {
   if (user) {
     if (loginBtn) {
       loginBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:18px;height:18px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
           <circle cx="12" cy="7" r="4"/>
         </svg>
         <span class="nav-tooltip">Account</span>`;
       loginBtn.setAttribute('aria-label', 'Account');
     }
+    const footerSignin = document.getElementById('footer-signin-link');
+    if (footerSignin) footerSignin.textContent = 'Account';
   } else {
     if (loginBtn) {
       loginBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:18px;height:18px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
           <circle cx="12" cy="7" r="4"/>
         </svg>
         <span class="nav-tooltip">Sign in</span>`;
       loginBtn.setAttribute('aria-label', 'Sign in');
     }
+    const footerSignin = document.getElementById('footer-signin-link');
+    if (footerSignin) footerSignin.textContent = 'Sign In';
   }
-}
-
-// ===== Utility =====
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function escapeAttr(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 document.addEventListener('DOMContentLoaded', init);
