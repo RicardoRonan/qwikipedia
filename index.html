@@ -6,8 +6,14 @@
   <meta name="description" content="Qwikipedia - a personalized Wikipedia feed that learns what you like." />
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
   <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Qwikipedia" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png" />
   <title>Qwikipedia</title>
-  <link rel="icon" type="image/png" href="Qwikipedia%20logo.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
   <!-- GSAP for animations -->
   <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js" defer></script>
@@ -430,6 +436,12 @@
         </p>
       </div>
 
+      <div class="settings-section" id="install-app-section" hidden>
+        <div class="settings-section-header">App</div>
+        <p class="settings-info-text" id="install-app-status">Install Qwikipedia on this device.</p>
+        <button class="btn-secondary" id="install-app-btn" type="button"><span class="btn-label">Install app</span></button>
+      </div>
+
     </section>
 
     <!-- ===== Search Page ===== -->
@@ -581,6 +593,9 @@
     <button type="button" id="lightbox-prev" aria-label="Previous image" hidden></button>
     <button type="button" id="lightbox-next" aria-label="Next image" hidden></button>
     <div id="lightbox-inner">
+      <div id="lightbox-loader" hidden>
+        <div class="loading-spinner" role="status" aria-label="Loading image"></div>
+      </div>
       <img id="lightbox-img" src="" alt="" />
     </div>
     <div id="lightbox-toolbar">

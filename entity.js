@@ -3,12 +3,12 @@
 const TYPE_KEYWORDS = {
   place: ['cities','city','towns','villages','municipalities','countries','islands','rivers','lakes','mountains','continents','capitals','populated places','districts','provinces','regions','counties','boroughs','settlements','landforms','volcanoes'],
   musicArtist: ['musical groups','bands','musicians','singers','rappers','songwriters','composers','guitarists','pianists','drummers','rock music','pop music','hip hop musicians'],
-  musicRelease: ['albums','songs','singles','eps','studio albums','live albums','compilation albums','soundtracks','debut albums','debut singles'],
+  musicRelease: ['albums','album','songs','song','singles','eps','studio albums','live albums','compilation albums','soundtracks','debut albums','debut singles'],
   person: ['births','deaths','people','politicians','scientists','writers','actors','philosophers','inventors','businesspeople','activists','film directors','footballers','monarchs','heads of state'],
   vehicle: ['automobiles','car models','vehicles','motorcycles','aircraft','ships','locomotives','tractors','bicycles'],
   company: ['companies','organizations','businesses','brands','corporations','airlines','banks','software companies','manufacturers','retailers','websites','record labels'],
-  film: ['films','movies','animated films','documentary films','film series'],
-  tv: ['television series','television programs','web series','miniseries','television seasons','anime series'],
+  film: ['films','film','movies','movie','animated films','documentary films','film series'],
+  tv: ['television series','television programs','web series','miniseries','television seasons','television episodes','tv series','tv season','anime series','seasons','season','episodes','episode'],
   book: ['novels','books','literary works','poems','plays','comics','manga'],
   species: ['species','animals','plants','insects','birds','mammals','reptiles','fish','fungi','genera','taxa'],
   game: ['video games','video game series','video game franchises','mobile games','arcade games','computer games'],
@@ -22,7 +22,7 @@ const QID_TYPE_MAP = {
   Q753110:'musicArtist', Q36834:'musicArtist', Q158852:'musicArtist',
   Q482994:'musicRelease', Q7366:'musicRelease', Q134556:'musicRelease', Q169930:'musicRelease',
   Q11424:'film', Q202866:'film', Q24856:'film',
-  Q5398426:'tv', Q15416:'tv',
+  Q5398426:'tv', Q15416:'tv', Q3464665:'tv', Q21191270:'tv', Q1983062:'tv',
   Q7889:'game',
   Q571:'book', Q7725634:'book', Q8261:'book',
   Q16521:'species', Q729:'species', Q756:'species',
@@ -37,13 +37,29 @@ export function typeFromWikidata(instanceOf = []) {
   return null;
 }
 
+function keywordInText(text, word) {
+  if (word === 'eps') return /(?:^|[^a-z])eps(?:[^a-z]|$)/.test(text);
+  return text.includes(word);
+}
+
+function typeFromTitle(title) {
+  const t = String(title || '').toLowerCase();
+  if (!t) return null;
+  if (/\b(episode|episodes|season|seasons)\b/.test(t)) return 'tv';
+  if (/\b(song|songs|album|albums|single|singles)\b/.test(t)) return 'musicRelease';
+  if (/\b(movie|movies|film|films)\b/.test(t)) return 'film';
+  return null;
+}
+
 export function classifyEntity(article = {}) {
   const cats = (article.categories || []).map(c => String(c).toLowerCase());
   if (cats.length) {
     for (const [type, words] of Object.entries(TYPE_KEYWORDS)) {
-      if (cats.some(c => words.some(w => c.includes(w)))) return type;
+      if (cats.some(c => words.some(w => keywordInText(c, w)))) return type;
     }
   }
+  const fromTitle = typeFromTitle(article.displayTitle || article.title || '');
+  if (fromTitle) return fromTitle;
   if (article.coordinates) return 'place';
   return 'other';
 }

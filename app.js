@@ -5,7 +5,7 @@ import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay } from '
 import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles, setCacheUserId } from './wiki.js';
 import { applyTheme, applyTextScale, initSettings, refreshInterests } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
-import { showToast } from './toast.js';
+import { showToast, showActionToast } from './toast.js';
 import { ICONS } from './icons.js';
 import { cleanWikipediaText, escapeHtml, escapeAttr } from './text-utils.js';
 import { bindYoutubeLinks, prefetchVisibleYoutubeQueries } from './ai.js';
@@ -13,6 +13,7 @@ import { usePullToRefresh } from './usePullToRefresh.js';
 import { warmArticleCache, hasCacheClient, pruneStaleCache } from './cache.js';
 import { toggleDeepDive } from './deepdive.js';
 import { bindPronounceButtons, initPronounce, stopSpeaking } from './pronounce.js';
+import { initInstallPrompt } from './pwa-install.js';
 import {
   setHidden,
   setBusy,
@@ -37,6 +38,7 @@ let prefetchObserver = null;
 let _sessionSeen = 0;
 let _sessionLiked = 0;
 let _sessionDismissed = 0;
+let _pendingDismiss = null;
 
 let _sessionMs = 0;                              // active time this page-load
 let _flushedMs = 0;                              // portion already written to storage
@@ -207,8 +209,12 @@ function createCard(article, featured = false) {
     ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitleRaw)}" loading="lazy" onerror="this.parentElement.classList.add('is-hidden')"></div>`
     : ``;
 
+  const featuredCollapsed = featured && !!Storage.getPrefs().featuredCollapsed;
   const featuredBadge = featured
-    ? `<div class="card-featured-badge">${ICONS.arrowRight} Today's featured article</div>`
+    ? `<button type="button" class="card-featured-toggle" aria-expanded="${featuredCollapsed ? 'false' : 'true'}" aria-label="${featuredCollapsed ? "Expand today's featured article" : "Collapse today's featured article"}">
+        <span class="card-featured-toggle-label">${ICONS.arrowRight} Today's featured article</span>
+        <span class="card-featured-chevron">${ICONS.chevronRight}</span>
+      </button>`
     : '';
 
   el.innerHTML = `
@@ -240,6 +246,18 @@ function createCard(article, featured = false) {
       </div>
     </div>
   `;
+
+  if (featured) {
+    el.classList.add('card-featured');
+    const toggle = el.querySelector('.card-featured-toggle');
+    applyFeaturedCollapsed(el, toggle, featuredCollapsed);
+    toggle?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const collapsed = !el.classList.contains('is-collapsed');
+      applyFeaturedCollapsed(el, toggle, collapsed);
+      Storage.setPrefs({ featuredCollapsed: collapsed });
+    });
+  }
 
   const likeBtn = el.querySelector('.btn-like');
   const dislikeBtn = el.querySelector('.btn-dislike');
@@ -285,6 +303,16 @@ function createCard(article, featured = false) {
   return el;
 }
 
+function applyFeaturedCollapsed(cardEl, toggle, collapsed) {
+  if (!cardEl) return;
+  cardEl.classList.toggle('is-collapsed', collapsed);
+  if (!toggle) return;
+  toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  toggle.setAttribute('aria-label', collapsed
+    ? "Expand today's featured article"
+    : "Collapse today's featured article");
+}
+
 function syncExtractExpanded(extractEl, expanded) {
   extractEl.classList.toggle('expanded', expanded);
   extractEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -322,12 +350,24 @@ function setupExtractExpansion(cardEl, extractEl) {
 
 const _extractFetchCache = new Map();
 
+function syncListenText(cardEl, extractEl) {
+  const listen = cardEl?.querySelector('.card-extract-listen');
+  if (listen) listen.dataset.pronounceText = (extractEl?.textContent || '').trim();
+}
+
 async function toggleExtractExpansion(extractEl) {
   if (!extractEl) return;
   const cardEl = extractEl.closest('.card');
   if (!cardEl) return;
+  const wasReading = extractEl.classList.contains('is-speech-reading');
+  stopSpeaking();
+  extractEl.textContent = extractEl.textContent;
+  delete extractEl.dataset.wordsWrapped;
+  delete extractEl.dataset.gotBoundary;
+  extractEl.classList.remove('is-speech-reading');
+
   const wasExpanded = extractEl.classList.contains('expanded');
-  if (wasExpanded) {
+  if (wasExpanded && !wasReading) {
     syncExtractExpanded(extractEl, false);
     return;
   }
@@ -342,6 +382,7 @@ async function toggleExtractExpansion(extractEl) {
     if (cached && cached.length > (extractEl.textContent || '').trim().length) {
       extractEl.textContent = cached;
     }
+    syncListenText(cardEl, extractEl);
     return;
   }
   try {
@@ -352,6 +393,7 @@ async function toggleExtractExpansion(extractEl) {
     _extractFetchCache.set(key, full);
     if (full && full.length > startingLen && extractEl.classList.contains('expanded')) {
       extractEl.textContent = full;
+      syncListenText(cardEl, extractEl);
     }
   } catch {}
 }
@@ -427,26 +469,63 @@ function animateLike(cardEl, likeBtn, article) {
   }
 }
 
+function commitPendingDismiss() {
+  const pending = _pendingDismiss;
+  if (!pending || pending.committed) return;
+  pending.committed = true;
+  _pendingDismiss = null;
+  pending.toast?.remove();
+  recordInteraction(pending.article, 'dislike');
+  Storage.incrementStat('totalDismissed');
+  _sessionDismissed++;
+  if (currentUser) scheduleSyncPrefs(currentUser.id);
+}
+
+function restoreDismissedCard(pending) {
+  const g = gsap();
+  if (g) g.set(pending.cardEl, { clearProps: 'opacity,x,transform' });
+  else {
+    pending.cardEl.style.opacity = '';
+    pending.cardEl.style.transform = '';
+  }
+  if (pending.parent?.isConnected) {
+    pending.parent.insertBefore(pending.cardEl, pending.nextSibling);
+  }
+}
+
 function animateDismiss(cardEl, article) {
   const g = gsap();
 
   stopSpeaking();
-  recordInteraction(article, 'dislike');
-  Storage.incrementStat('totalDismissed');
-  _sessionDismissed++;
-  if (currentUser) scheduleSyncPrefs(currentUser.id);
+  commitPendingDismiss();
+
+  const parent = cardEl.parentNode;
+  const nextSibling = cardEl.nextSibling;
+
+  const afterGone = () => {
+    cardEl.remove();
+    const pending = { article, cardEl, parent, nextSibling, toast: null, committed: false };
+    _pendingDismiss = pending;
+    pending.toast = showActionToast(
+      'Article dismissed',
+      'Undo',
+      () => {
+        if (_pendingDismiss !== pending || pending.committed) return;
+        _pendingDismiss = null;
+        restoreDismissedCard(pending);
+      },
+      5000,
+      () => commitPendingDismiss(),
+    );
+  };
 
   if (g) {
     g.to(cardEl, {
       opacity: 0, x: -20, duration: 0.22, ease: 'power2.in',
-      onComplete: () => {
-        cardEl.remove();
-        showToast('Article dismissed', 'info');
-      },
+      onComplete: afterGone,
     });
   } else {
-    cardEl.remove();
-    showToast('Article dismissed', 'info');
+    afterGone();
   }
 }
 
@@ -778,6 +857,7 @@ function renderCachedThenRefresh(container, cached, lang) {
     const card = createCard(featured, true);
     container.insertBefore(card, container.firstChild);
     bindPronounceButtons(card);
+    if (card.classList.contains('is-collapsed')) return;
     if (!_newContentAnchor) _newContentAnchor = card;
     _pendingNewCount += 1;
     showNewContentPill();
@@ -824,6 +904,7 @@ async function runLoadFeed(append, { container, loadMoreBtn, loadingLabel, lang,
 
   // Full reload should not compete with a background prefetch
   if (!append) {
+    commitPendingDismiss();
     _prefetchPromise = null;
     _prefetchLang = null;
     _underfillChain = 0;
@@ -1281,6 +1362,7 @@ async function handleAuthSubmit(e) {
 function initLightbox() {
   const lb        = document.getElementById('lightbox');
   const lbImg     = document.getElementById('lightbox-img');
+  const lbLoader  = document.getElementById('lightbox-loader');
   const lbCaption = document.getElementById('lightbox-caption');
   const lbCount   = document.getElementById('lightbox-count');
   const lbSource  = document.getElementById('lightbox-source');
@@ -1295,6 +1377,34 @@ function initLightbox() {
   let currentSrc = '';
   let _lightboxTrigger = null;
   let _didSwipe = false;
+  let _lbLoadGen = 0;
+
+  function setLightboxLoading(on) {
+    if (lbLoader) lbLoader.hidden = !on;
+    lbImg.classList.toggle('is-pending', on);
+    lb.setAttribute('aria-busy', on ? 'true' : 'false');
+    if (!on) {
+      lbImg.style.opacity = '1';
+    }
+  }
+
+  function whenLightboxImgReady(gen, onReady) {
+    const finish = () => {
+      if (gen !== _lbLoadGen) return;
+      onReady();
+    };
+    const img = lbImg;
+    if (img.complete) {
+      finish();
+      return;
+    }
+    img.addEventListener('load', finish, { once: true });
+    img.addEventListener('error', finish, { once: true });
+    if (typeof img.decode === 'function') {
+      img.decode().then(finish).catch(finish);
+    }
+    setTimeout(finish, 8000);
+  }
 
   if (lbPrev) lbPrev.innerHTML = ICONS.chevronLeft || '';
   if (lbNext) lbNext.innerHTML = ICONS.chevronRight || '';
@@ -1307,8 +1417,11 @@ function initLightbox() {
     galleryIndex = ((i % gallery.length) + gallery.length) % gallery.length;
     const item = gallery[galleryIndex];
     currentSrc = item.src;
-    lbImg.src = item.src;
+    const gen = ++_lbLoadGen;
+    setLightboxLoading(true);
     lbImg.alt = item.alt || '';
+    lbImg.src = item.src;
+    whenLightboxImgReady(gen, () => setLightboxLoading(false));
     if (lbCaption) lbCaption.textContent = item.alt || '';
     if (lbSource) {
       lbSource.href = item.page || item.src;
@@ -1329,14 +1442,14 @@ function initLightbox() {
     if (!list.length) return;
     gallery = list;
     _lightboxTrigger = document.activeElement;
-    showItem(startIndex);
     lb.classList.add('open');
+    showItem(startIndex);
     lbClose?.focus();
 
     const g = gsap();
     if (g) {
-      g.fromTo(lb,     { opacity: 0 },          { opacity: 1, duration: 0.22, ease: 'power2.out' });
-      g.fromTo(lbImg,  { scale: 0.92, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.28, ease: 'back.out(1.4)' });
+      g.fromTo(lb, { opacity: 0 }, { opacity: 1, duration: 0.22, ease: 'power2.out' });
+      g.fromTo(lbImg, { scale: 0.92 }, { scale: 1, duration: 0.28, ease: 'back.out(1.4)' });
     }
     document.body.style.overflow = 'hidden';
   }
@@ -1344,6 +1457,8 @@ function initLightbox() {
   function closeLightbox() {
     const g = gsap();
     const done = () => {
+      _lbLoadGen += 1;
+      setLightboxLoading(false);
       lb.classList.remove('open');
       lbImg.src = '';
       currentSrc = '';
@@ -1369,7 +1484,7 @@ function initLightbox() {
     showItem(galleryIndex + delta);
     const g = gsap();
     if (g) {
-      g.fromTo(lbImg, { opacity: 0.35, x: delta > 0 ? 28 : -28 }, { opacity: 1, x: 0, duration: 0.18, ease: 'power2.out' });
+      g.fromTo(lbImg, { x: delta > 0 ? 28 : -28 }, { x: 0, duration: 0.18, ease: 'power2.out' });
     }
   }
 
@@ -2418,6 +2533,7 @@ async function init() {
 
   // Lightbox
   initLightbox();
+  initInstallPrompt();
   initPronounce();
 
   // Click-to-expand delegation for card extracts

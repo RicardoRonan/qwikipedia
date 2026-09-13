@@ -18,6 +18,7 @@ const DEFAULT_PREFS = {
   pronounceEnabled: true,
   pronounceRate: 1,
   pronounceVoice: '',
+  featuredCollapsed: false,
 };
 
 const DEFAULT_ENGINE = {

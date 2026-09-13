@@ -10,7 +10,7 @@ export function showToast(message, type = 'info', durationMs = 3500) {
   setTimeout(() => toast.remove(), durationMs);
 }
 
-export function showActionToast(message, actionLabel, onAction, durationMs = 5000) {
+export function showActionToast(message, actionLabel, onAction, durationMs = 5000, onExpire) {
   const container = document.getElementById('toast-container');
   if (!container) return null;
   let dismissed = false;
@@ -35,7 +35,9 @@ export function showActionToast(message, actionLabel, onAction, durationMs = 500
 
   container.appendChild(toast);
   setTimeout(() => {
-    if (!dismissed) toast.remove();
+    if (dismissed) return;
+    toast.remove();
+    if (typeof onExpire === 'function') onExpire();
   }, durationMs);
   return toast;
 }

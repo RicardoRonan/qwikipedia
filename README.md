@@ -20,6 +20,7 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 - **Supabase auth** (email/password) for cross-device preference sync
 - **No server needed** - recommendation logic runs entirely in your browser
 - **All data stays on your device** unless you sign in
+- **Installable PWA** - add to your home screen and keep using the app offline
 
 ## Quick Start
 
@@ -51,8 +52,17 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 | `ui.js` | Shared loading, empty/error, and button-state helpers |
 | `toast.js` | Toast notifications |
 | `usePullToRefresh.js` | Pull-to-refresh hook |
-| `sw.js` | Service worker: app-shell + Wikimedia API/asset caching |
+| `sw.js` | Service worker: app-shell + vendor CDN + Wikimedia API/asset caching |
+| `pwa-install.js` | Install prompt and Settings → App affordance |
+| `manifest.webmanifest` | PWA manifest (relative `start_url` / `scope`) |
+| `icons/` | Generated app icons (192, 512, maskable, Apple touch) |
 | `supabase/functions/ai/` | Supabase Edge Function (Groq) - see `AI_SETUP.md` |
+
+## PWA / Install
+
+Qwikipedia is an installable Progressive Web App. There is no build step: open `index.html` over `http://localhost` or HTTPS, then install from the browser (Chrome/Edge: address-bar install or Settings → App → Install app; iOS Safari: Share → Add to Home Screen).
+
+After the first visit, the service worker precaches the app shell (`manifest.webmanifest`, styles, scripts, and `icons/`) and caches jsDelivr vendor scripts so the feed, saved list, and navigation keep working offline. Wikipedia random endpoints are never cached.
 
 ### AI enhancements (optional)
 

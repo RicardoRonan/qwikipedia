@@ -12,7 +12,7 @@ import {
 } from './auth.js';
 import { fetchSummary } from './wiki.js';
 import { ICONS } from './icons.js';
-import { escapeHtml, escapeAttr } from './text-utils.js';
+import { cleanWikipediaText, escapeHtml, escapeAttr } from './text-utils.js';
 import { isAiEnabled, setAiEnabled, checkAiAvailability } from './ai.js';
 import { getVoices, isPronounceSupported } from './pronounce.js';
 import { setButtonLoading } from './ui.js';
@@ -508,12 +508,36 @@ function cssEscape(value) {
   return String(value).replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~\n]/g, c => '\\' + c);
 }
 
+function articleFromLike(title, article, lang) {
+  const stored = (Storage.getLikedState().likedArticles || []).find(a => a?.title === title);
+  const src = article || stored || {};
+  return {
+    title,
+    displayTitle: cleanWikipediaText(src.displayTitle || src.title || title),
+    extract: cleanWikipediaText(src.extract || ''),
+    image: src.image || null,
+    url: src.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
+    lang: src.lang || lang,
+    categories: src.categories || [],
+    coordinates: src.coordinates || null,
+    qid: src.qid || null,
+  };
+}
+
+function paintLikeSaveButton(btn, title, saved) {
+  if (!btn) return;
+  btn.innerHTML = `${saved ? ICONS.bookmarkFilled : ICONS.bookmark} ${saved ? 'Unsave' : 'Save'}`;
+  btn.setAttribute('aria-label', `${saved ? 'Unsave' : 'Save'} ${title}`);
+  btn.classList.toggle('like-unlike-btn', saved);
+}
+
 function renderLikeCardHtml(title, article, lang) {
   const safeTitle = escapeHtml(title);
   const url = article?.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`;
   const display = article?.displayTitle || article?.title || title;
   const image = article?.image;
   const extract = article?.extract;
+  const isSaved = Storage.isSaved(title);
 
   const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
   const thumb = image
@@ -534,6 +558,9 @@ function renderLikeCardHtml(title, article, lang) {
           <a href="${escapeHtml(url)}" target="_blank" rel="noopener" aria-label="Open ${safeTitle} on Wikipedia">
             ${ICONS.externalLink || ''} Open
           </a>
+          <button type="button"${isSaved ? ' class="like-unlike-btn"' : ''} data-save-title="${escapeAttr(title)}" aria-label="${isSaved ? 'Unsave' : 'Save'} ${safeTitle}">
+            ${isSaved ? ICONS.bookmarkFilled : ICONS.bookmark} ${isSaved ? 'Unsave' : 'Save'}
+          </button>
           <button type="button" class="like-unlike-btn" data-unlike-title="${safeTitle}" aria-label="Unlike ${safeTitle}">
             ${ICONS.heartFilled || ''} Unlike
           </button>
@@ -583,6 +610,26 @@ function bindLikesEvents() {
   if (feed && !feed.dataset.bound) {
     feed.dataset.bound = '1';
     feed.addEventListener('click', async (e) => {
+      const saveBtn = e.target.closest('[data-save-title]');
+      if (saveBtn) {
+        const title = saveBtn.dataset.saveTitle;
+        const lang = Storage.getPrefs().wikiLang || 'en';
+        const cached = _likesSummaryCache.get(title);
+        if (Storage.isSaved(title)) {
+          Storage.removeSaved(title);
+          paintLikeSaveButton(saveBtn, title, false);
+          showToast('Removed from saved', 'info');
+        } else {
+          Storage.addSaved(title);
+          Storage.setSavedArticle(articleFromLike(title, cached, lang));
+          paintLikeSaveButton(saveBtn, title, true);
+          showToast('Saved for later', 'success');
+        }
+        const user = await getCurrentUser();
+        if (user) scheduleSyncPrefs(user.id);
+        return;
+      }
+
       const btn = e.target.closest('[data-unlike-title]');
       if (!btn) return;
       const title = btn.dataset.unlikeTitle;
