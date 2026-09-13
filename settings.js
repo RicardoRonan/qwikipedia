@@ -191,13 +191,13 @@ async function updateAiStatus(statusEl) {
   statusEl.textContent = 'Checking AI helper…';
   const { available, ai, reason } = await checkAiAvailability();
   if (!available) {
-    statusEl.textContent = 'Edge function not reachable—using local heuristics. Deploy the ai function (see AI_SETUP.md).';
+    statusEl.textContent = 'Edge function not reachable, using local heuristics. Deploy the ai function (see AI_SETUP.md).';
     return;
   }
   if (ai) {
     statusEl.textContent = 'AI helper is online (Groq). Search and YouTube use smart queries when you click.';
   } else {
-    statusEl.textContent = 'Edge function is up but GROQ_API_KEY is missing—using local heuristics until you add the secret.';
+    statusEl.textContent = 'Edge function is up but GROQ_API_KEY is missing, using local heuristics until you add the secret.';
   }
 }
 

@@ -95,6 +95,8 @@ function showPage(id) {
 
   document.title = PAGE_TITLES[id] ? `${PAGE_TITLES[id]} · Qwikipedia` : 'Qwikipedia';
   window.scrollTo(0, 0);
+  if (id === 'feed-page') updateFeedFilterBadge();
+  else setFeedFilterPanelOpen(false);
 
   const heading = page?.querySelector('h1');
   if (heading) {
@@ -183,10 +185,10 @@ function createCard(article, featured = false) {
         </div>
         <div class="card-icon-group">
           <button class="card-icon-btn btn-save ${isSaved ? 'saved' : ''}" aria-label="${isSaved ? 'Remove from saved' : 'Save for later'}">${isSaved ? ICONS.bookmarkFilled : ICONS.bookmark}</button>
-          <button class="card-icon-btn btn-like ${isLiked ? 'liked' : ''}" aria-label="Like this article">${isLiked ? ICONS.heartFilled : ICONS.heart}</button>
+          <button class="card-icon-btn btn-like ${isLiked ? 'liked' : ''}" aria-label="${isLiked ? 'Unlike this article' : 'Like this article'}">${isLiked ? ICONS.heartFilled : ICONS.heart}</button>
           <button class="card-icon-btn btn-dislike" aria-label="Not interested">${ICONS.x}</button>
           <button class="card-icon-btn btn-deepdive" data-deepdive-topic="${escapeAttr(displayTitleRaw)}" aria-label="Deep dive research">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            ${ICONS.compass}
           </button>
         </div>
       </div>
@@ -232,6 +234,16 @@ function createCard(article, featured = false) {
   return el;
 }
 
+function syncExtractExpanded(extractEl, expanded) {
+  extractEl.classList.toggle('expanded', expanded);
+  extractEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  const toggle = extractEl.parentElement?.querySelector('.card-extract-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.textContent = expanded ? 'Show less' : 'Show more';
+  }
+}
+
 function setupExtractExpansion(cardEl, extractEl) {
   if (!cardEl || !extractEl) return;
   if ((extractEl.textContent || '').trim().length === 0) return;
@@ -239,6 +251,13 @@ function setupExtractExpansion(cardEl, extractEl) {
   extractEl.setAttribute('role', 'button');
   extractEl.setAttribute('tabindex', '0');
   extractEl.setAttribute('aria-expanded', 'false');
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'card-extract-toggle';
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.textContent = 'Show more';
+  extractEl.after(toggle);
 }
 
 const _extractFetchCache = new Map();
@@ -249,12 +268,10 @@ async function toggleExtractExpansion(extractEl) {
   if (!cardEl) return;
   const wasExpanded = extractEl.classList.contains('expanded');
   if (wasExpanded) {
-    extractEl.classList.remove('expanded');
-    extractEl.setAttribute('aria-expanded', 'false');
+    syncExtractExpanded(extractEl, false);
     return;
   }
-  extractEl.classList.add('expanded');
-  extractEl.setAttribute('aria-expanded', 'true');
+  syncExtractExpanded(extractEl, true);
 
   const title = cardEl.dataset.title || '';
   const lang = Storage.getPrefs().wikiLang || 'en';
@@ -284,6 +301,13 @@ function initExtractClickDelegation() {
   if (!feed || feed.dataset.extractDelegationBound === '1') return;
   feed.dataset.extractDelegationBound = '1';
   feed.addEventListener('click', (e) => {
+    const toggleEl = e.target.closest?.('.card-extract-toggle');
+    if (toggleEl && feed.contains(toggleEl)) {
+      e.preventDefault();
+      const extractEl = toggleEl.closest('.card')?.querySelector('.card-extract');
+      toggleExtractExpansion(extractEl);
+      return;
+    }
     const extractEl = e.target.closest?.('.card-extract');
     if (!extractEl || !feed.contains(extractEl)) return;
     // ignore link clicks inside the extract
@@ -310,6 +334,7 @@ function animateLike(cardEl, likeBtn, article) {
     Storage.removeLiked(article.title);
     likeBtn.innerHTML = ICONS.heart;
     likeBtn.classList.remove('liked');
+    likeBtn.setAttribute('aria-label', 'Like this article');
     showToast('Removed from likes', 'info');
   } else {
     recordInteraction(article, 'like');
@@ -325,6 +350,7 @@ function animateLike(cardEl, likeBtn, article) {
     _sessionLiked++;
     likeBtn.innerHTML = ICONS.heartFilled;
     likeBtn.classList.add('liked');
+    likeBtn.setAttribute('aria-label', 'Unlike this article');
     showToast('Added to likes', 'success');
   }
   if (currentUser) scheduleSyncPrefs(currentUser.id);
@@ -406,6 +432,8 @@ let _lastAutoLoadAt  = 0;
 let _didSeenRecovery = false;
 const FEED_SESSION_CACHE_KEY = 'sw_feed_session_cache_v1';
 const FEED_PERSISTED_CACHE_KEY = 'sw_feed_cache_v1';
+let _pendingNewCount = 0;
+let _newContentAnchor = null;
 
 function fetchBatchSingleFlight(lang) {
   // Reuse an in-flight background batch if one exists for this language
@@ -546,22 +574,54 @@ function afterFeedCardsUpdated(container) {
   prefetchVisibleYoutubeQueries(container);
 }
 
-function appendUniqueArticles(container, articles = []) {
+function showNewContentPill() {
+  const pill = document.getElementById('new-content-pill');
+  if (!pill || _pendingNewCount <= 0) return;
+  pill.textContent = `${_pendingNewCount} new article${_pendingNewCount === 1 ? '' : 's'} added`;
+  pill.hidden = false;
+  setHidden(pill, false);
+}
+
+function hideNewContentPill() {
+  _pendingNewCount = 0;
+  _newContentAnchor = null;
+  const pill = document.getElementById('new-content-pill');
+  if (!pill) return;
+  pill.hidden = true;
+  setHidden(pill, true);
+}
+
+function announceFeedBatch(count) {
+  const el = document.getElementById('feed-announcer');
+  if (!el || count <= 0) return;
+  el.textContent = `${count} more article${count === 1 ? '' : 's'} loaded`;
+}
+
+function appendUniqueArticles(container, articles = [], { background = false } = {}) {
   const onScreen = new Set([...container.querySelectorAll('.card')].map(el => el.dataset.title));
   const likedTitles = new Set(Storage.getHistory().likedTitles || []);
   let added = 0;
+  let firstAdded = null;
   articles.forEach(a => {
     if (!a?.title || onScreen.has(a.title)) return;
     // Exclude liked articles from the main feed
     if (likedTitles.has(a.title)) return;
     onScreen.add(a.title);
     Storage.addSeen(a.title);
-    container.appendChild(createCard(a));
+    const card = createCard(a);
+    if (!firstAdded) firstAdded = card;
+    container.appendChild(card);
     Storage.incrementStat('totalSeen');
     _sessionSeen++;
     added++;
   });
   if (added) afterFeedCardsUpdated(container);
+  if (background && added) {
+    if (!_newContentAnchor) _newContentAnchor = firstAdded;
+    _pendingNewCount += added;
+    showNewContentPill();
+  }
+  return added;
 }
 
 let _backoffStatusInterval = null;
@@ -599,7 +659,7 @@ function silentBackgroundRefresh(container, lang) {
       _prefetchLang = null;
     }
     const before = container.querySelectorAll('.card').length;
-    appendUniqueArticles(container, fresh);
+    appendUniqueArticles(container, fresh, { background: true });
     const after = container.querySelectorAll('.card').length;
     if (after > before) attachScrollSentinel();
     startPrefetch(lang);
@@ -610,7 +670,8 @@ function silentBackgroundRefresh(container, lang) {
 
 /** Append cached articles silently (used for auto-scroll loads when prefetch isn't ready). */
 function appendCachedThenRefresh(container, cached, lang) {
-  appendUniqueArticles(container, cached);
+  const added = appendUniqueArticles(container, cached);
+  if (added) announceFeedBatch(added);
   attachScrollSentinel();
   attachPrefetchSentinel();
   silentBackgroundRefresh(container, lang);
@@ -618,6 +679,7 @@ function appendCachedThenRefresh(container, cached, lang) {
 
 /** Paint cached articles immediately, then silently fetch fresh ones and append non-dupes. */
 function renderCachedThenRefresh(container, cached, lang) {
+  hideNewContentPill();
   container.innerHTML = '';
   appendUniqueArticles(container, cached);
 
@@ -637,7 +699,11 @@ function renderCachedThenRefresh(container, cached, lang) {
   if (getApiBackoffRemainingMs() <= 1000) getFeaturedCard(lang).then(featured => {
     if (!featured) return;
     if (container.querySelector(`.card[data-title="${CSS.escape(featured.title)}"]`)) return;
-    container.insertBefore(createCard(featured, true), container.firstChild);
+    const card = createCard(featured, true);
+    container.insertBefore(card, container.firstChild);
+    if (!_newContentAnchor) _newContentAnchor = card;
+    _pendingNewCount += 1;
+    showNewContentPill();
   }).catch(() => {});
 }
 
@@ -811,10 +877,11 @@ async function runLoadFeed(append, { container, loadMoreBtn, loadingLabel, lang,
         // Atomic swap to prevent blank flash on reload.
         removeSkeletonCards(container);
         container.innerHTML = '';
+        hideNewContentPill();
         if (featured) container.appendChild(createCard(featured, true));
         appendUniqueArticles(container, articles);
       } else {
-        appendUniqueArticles(container, articles);
+        announceFeedBatch(appendUniqueArticles(container, articles));
       }
     }
     if (!append) showWelcomeBack();
@@ -1025,7 +1092,7 @@ function resetPasswordVisibility() {
   if (passwordInput) passwordInput.type = 'password';
   if (passwordToggle) {
     passwordToggle.setAttribute('aria-label', 'Show password');
-    passwordToggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    passwordToggle.innerHTML = ICONS.eye;
   }
 }
 
@@ -1280,7 +1347,7 @@ function initLightbox() {
       showToast('Download failed - try right-clicking the image', 'error');
     } finally {
       lbDl.classList.remove('loading');
-      lbDl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg> Download`;
+      lbDl.innerHTML = `${ICONS.download} Download`;
     }
   });
 
@@ -1305,6 +1372,87 @@ const INTEREST_OPTIONS = [
   { id: 'sports',     label: 'Sports',     icon: ICONS.trophy },
   { id: 'food',       label: 'Food',       icon: ICONS.utensils },
 ];
+
+function getSelectedInterestIds() {
+  return (Storage.getPrefs().interests || []).map(v => String(v).toLowerCase().trim()).filter(Boolean);
+}
+
+function updateFeedFilterBadge() {
+  const btn = document.getElementById('feed-filter-btn');
+  if (!btn) return;
+  const count = getSelectedInterestIds().length;
+  let badge = btn.querySelector('.feed-filter-count');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'feed-filter-count';
+    btn.appendChild(badge);
+  }
+  if (count > 0) {
+    badge.textContent = String(count);
+    badge.hidden = false;
+    btn.setAttribute('aria-label', `Filter feed by interests, ${count} active`);
+  } else {
+    badge.textContent = '';
+    badge.hidden = true;
+    btn.setAttribute('aria-label', 'Filter feed by interests');
+  }
+}
+
+function setFeedFilterPanelOpen(open) {
+  const panel = document.getElementById('feed-filter-panel');
+  const btn = document.getElementById('feed-filter-btn');
+  if (btn) btn.setAttribute('aria-expanded', String(!!open));
+  if (!panel) return;
+  panel.hidden = !open;
+  setHidden(panel, !open);
+  if (open) renderFeedFilterPanel();
+}
+
+function renderFeedFilterPanel() {
+  const panel = document.getElementById('feed-filter-panel');
+  if (!panel) return;
+  const selected = getSelectedInterestIds();
+  const chips = selected.map(id => {
+    const opt = INTEREST_OPTIONS.find(o => o.id === id);
+    const label = opt?.label || id;
+    const icon = opt?.icon || '';
+    return `<button type="button" class="interest-chip selected feed-filter-chip" data-topic="${escapeAttr(id)}" aria-label="Remove ${escapeAttr(label)}">
+      <span class="chip-icon">${icon}</span><span>${escapeHtml(label)}</span><span class="chip-check">${ICONS.x}</span>
+    </button>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="feed-filter-chips">${chips}</div>
+    <button type="button" class="feed-filter-edit" id="feed-filter-edit-btn">Edit interests</button>
+  `;
+
+  panel.querySelectorAll('.feed-filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const id = chip.dataset.topic;
+      const next = getSelectedInterestIds().filter(t => t !== id);
+      Storage.setPrefs({ interests: next });
+      if (currentUser) scheduleSyncPrefs(currentUser.id);
+      updateFeedFilterBadge();
+      renderFeedFilterPanel();
+      window.reloadFeed?.();
+    });
+  });
+
+  document.getElementById('feed-filter-edit-btn')?.addEventListener('click', () => {
+    setFeedFilterPanelOpen(false);
+    goToPage('settings-page');
+  });
+}
+
+function initFeedFilter() {
+  const btn = document.getElementById('feed-filter-btn');
+  if (!btn) return;
+  updateFeedFilterBadge();
+  btn.addEventListener('click', () => {
+    const open = btn.getAttribute('aria-expanded') === 'true';
+    setFeedFilterPanelOpen(!open);
+  });
+}
 
 function initOnboarding() {
   const overlay = document.getElementById('onboarding-overlay');
@@ -1393,6 +1541,7 @@ function initOnboarding() {
     selected.forEach(topic => { weights[topic] = (weights[topic] || 0) + 5; });
     Storage.setEngine({ topicWeights: weights });
     Storage.setPrefs({ interests: [...selected] });
+    updateFeedFilterBadge();
     localStorage.setItem('sw_onboarded', '1');
     if (currentUser) scheduleSyncPrefs(currentUser.id);
 
@@ -1595,6 +1744,7 @@ function renderSavedPage() {
       }).join('')}
     </div>
   `;
+  bindYoutubeLinks(document.getElementById('saved-feed'));
   document.getElementById('saved-clear-btn')?.addEventListener('click', async () => {
     if (!confirm('Remove all saved articles?')) return;
     Storage.setHistory({ savedTitles: [], savedArticles: [] });
@@ -1603,6 +1753,12 @@ function renderSavedPage() {
     renderSavedPage();
   });
   document.getElementById('saved-feed')?.addEventListener('click', (e) => {
+    const diveBtn = e.target.closest('.btn-deepdive');
+    if (diveBtn) {
+      const card = diveBtn.closest('.like-card');
+      toggleDeepDive(diveBtn, card, diveBtn.dataset.deepdiveTopic || '');
+      return;
+    }
     const btn = e.target.closest('[data-unsave-title]');
     if (!btn) return;
     const title = btn.dataset.unsaveTitle;
@@ -1631,6 +1787,8 @@ function renderSavedCardHtml(title, article, lang) {
         <p class="like-card-extract">${extract ? escapeHtml(extract) : ''}</p>
         <div class="like-card-actions">
           <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${ICONS.externalLink || ''} Open</a>
+          <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(display)}" aria-label="Watch related videos on YouTube">${(ICONS && ICONS.youtube) || '▶'} Watch related videos</a>
+          <button type="button" class="btn-deepdive" data-deepdive-topic="${escapeAttr(display)}" aria-label="Deep dive research">${(ICONS && ICONS.compass) || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>'}</button>
           <button type="button" class="like-unlike-btn" data-unsave-title="${safeTitle}" aria-label="Unsave ${safeTitle}">${ICONS.bookmarkFilled || ''} Unsave</button>
         </div>
       </div>
@@ -1744,6 +1902,18 @@ async function init() {
     window.reloadFeed?.();
   });
 
+  document.querySelectorAll('[data-static-icon]').forEach(el => {
+    const key = el.dataset.staticIcon;
+    if (ICONS[key]) el.innerHTML = ICONS[key];
+  });
+
+  document.getElementById('new-content-pill')?.addEventListener('click', () => {
+    _newContentAnchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    hideNewContentPill();
+  });
+
+  initFeedFilter();
+
   document.querySelectorAll('.app-footer a[data-page]').forEach(link => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
@@ -1813,9 +1983,7 @@ async function init() {
     const isPassword = passwordInput.type === 'password';
     passwordInput.type = isPassword ? 'text' : 'password';
     passwordToggle.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
-    passwordToggle.innerHTML = isPassword
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    passwordToggle.innerHTML = isPassword ? ICONS.eyeOff : ICONS.eye;
   });
 
   document.getElementById('forgot-password-link')?.addEventListener('click', async (e) => {
@@ -1903,6 +2071,7 @@ async function init() {
         applyTheme(refreshedPrefs.theme);
         applyTextScale(refreshedPrefs.textScale);
         refreshInterests();
+        updateFeedFilterBadge();
 
         // Reflect pulled language in the selector and reload the feed if it changed
         const langSelect = document.getElementById('wiki-lang-select');
@@ -2045,10 +2214,7 @@ function updateNavUser(user) {
   if (user) {
     if (loginBtn) {
       loginBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-          <circle cx="12" cy="7" r="4"/>
-        </svg>
+        ${ICONS.user}
         <span class="nav-tooltip">Account</span>`;
       loginBtn.setAttribute('aria-label', 'Account');
     }
@@ -2057,10 +2223,7 @@ function updateNavUser(user) {
   } else {
     if (loginBtn) {
       loginBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-          <circle cx="12" cy="7" r="4"/>
-        </svg>
+        ${ICONS.user}
         <span class="nav-tooltip">Sign in</span>`;
       loginBtn.setAttribute('aria-label', 'Sign in');
     }

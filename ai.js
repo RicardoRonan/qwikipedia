@@ -233,8 +233,8 @@ export function bindYoutubeLinks(root = document) {
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const title = link.dataset.youtubeTitle || '';
-      const card = link.closest('.card');
-      const extractEl = card?.querySelector('.card-extract');
+      const card = link.closest('.card, .like-card');
+      const extractEl = card?.querySelector('.card-extract, .like-card-extract');
       const extract = link.dataset.youtubeExtract || extractEl?.textContent || '';
       openYoutubeSearch({ title, extract }, link);
     });

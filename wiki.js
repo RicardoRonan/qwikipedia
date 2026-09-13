@@ -237,7 +237,7 @@ function writeSummaryDisk(bundle) {
   try {
     localStorage.setItem(SUMMARY_DISK_KEY, JSON.stringify(bundle));
   } catch {
-    // Quota exceeded — shrink the cache and try once more
+    // Quota exceeded, shrink the cache and try once more
     while (bundle.order.length > 40) {
       const drop = bundle.order.shift();
       if (drop) delete bundle.entries[drop];

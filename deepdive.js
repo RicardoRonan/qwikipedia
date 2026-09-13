@@ -1,4 +1,5 @@
 import { cleanWikipediaText, escapeHtml } from './text-utils.js';
+import { ICONS } from './icons.js';
 
 const enc = (s) => encodeURIComponent(s);
 
@@ -12,7 +13,7 @@ function buildSearchUrl(topic, template) {
 const RESOURCES = [
   {
     category: 'Learn',
-    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>',
+    icon: ICONS.bookOpen,
     links: [
       {
         name: 'Free Courses',
@@ -38,7 +39,7 @@ const RESOURCES = [
   },
   {
     category: 'Read',
-    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>',
+    icon: ICONS.book,
     links: [
       {
         name: 'E-Book Libraries',
@@ -64,7 +65,7 @@ const RESOURCES = [
   },
   {
     category: 'AI Research',
-    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    icon: ICONS.lock,
     links: [
       {
         name: 'Perplexity',
@@ -85,7 +86,7 @@ const RESOURCES = [
   },
   {
     category: 'Watch & Listen',
-    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
+    icon: ICONS.video,
     links: [
       {
         name: 'Educational YouTube',
@@ -106,7 +107,7 @@ const RESOURCES = [
   },
   {
     category: 'Explore',
-    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>',
+    icon: ICONS.compass,
     links: [
       {
         name: 'Maps & Travel',
@@ -132,7 +133,7 @@ function getTopicFromCard(cardEl, fallbackTopic = '') {
     cardEl?.dataset?.deepdiveTopic ||
     cardEl?.querySelector('.btn-deepdive')?.dataset?.deepdiveTopic ||
     '';
-  const fromTitle = cardEl?.querySelector('.card-title')?.textContent || '';
+  const fromTitle = cardEl?.querySelector('.card-title, .like-card-title')?.textContent || '';
   return cleanWikipediaText(fromData || fallbackTopic || fromTitle);
 }
 
@@ -213,7 +214,7 @@ export function toggleDeepDive(button, cardEl, topic = '') {
       a.target = '_blank';
       a.rel = 'noopener';
       a.className = 'deepdive-link';
-      a.title = `Search ${searchTopic} — ${link.name}`;
+      a.title = `Search ${searchTopic} - ${link.name}`;
       a.innerHTML = `<span class="deepdive-link-name">${link.name}</span><span class="deepdive-link-desc">${link.desc}</span>`;
       list.appendChild(a);
     }
@@ -226,10 +227,11 @@ export function toggleDeepDive(button, cardEl, topic = '') {
   const footer = document.createElement('div');
   footer.className = 'deepdive-footer';
   footer.innerHTML =
-    'Categories inspired by <a href="https://fmhy.net/" target="_blank" rel="noopener">FMHY</a> — each link searches for this topic';
+    'Categories inspired by <a href="https://fmhy.net/" target="_blank" rel="noopener">FMHY</a> - each link searches for this topic';
   panel.appendChild(footer);
 
-  cardEl.querySelector('.card-body').appendChild(panel);
+  const panelHost = cardEl.querySelector('.card-body, .like-card-body') || cardEl;
+  panelHost.appendChild(panel);
   button.classList.add('active');
   requestAnimationFrame(() => {
     requestAnimationFrame(() => panel.classList.add('is-open'));

@@ -35,7 +35,7 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 | `auth.js` | Supabase Auth: sign in, sign up, session, profile table CRUD |
 | `ai.js` | AI layer: YouTube query generation, search refinement (Edge Function + heuristics) |
 | `ai-heuristics.js` | Local fallbacks when the AI helper is offline |
-| `supabase/functions/ai/` | Supabase Edge Function (Groq) — see `AI_SETUP.md` |
+| `supabase/functions/ai/` | Supabase Edge Function (Groq) - see `AI_SETUP.md` |
 
 ### AI enhancements (optional)
 
