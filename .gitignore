@@ -1,3 +1,16 @@
+# Cursor / OpenCode / local AI prompts
+.cursor/
+.cursorrules
+.opencode/
+opencode.json
+AGENTS.md
+CLAUDE.md
+.claude/
+.agents/
+**/.cursor/rules/
+**/.cursor/plans/
+**/plans/
+
 # Markdown
 *.md
 
