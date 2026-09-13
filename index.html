@@ -303,6 +303,50 @@
         </p>
       </div>
 
+      <!-- Pronunciation -->
+      <div class="settings-section" id="pronounce-settings-section">
+        <div class="settings-section-header">Pronunciation</div>
+        <div class="settings-row pronounce-control">
+          <div class="settings-row-label">
+            <strong>Speak article titles</strong>
+            <span>Play pronunciation on feed cards using your browser</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="pronounce-enabled-toggle" checked aria-label="Enable pronunciation" />
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="settings-row settings-row--stack pronounce-control">
+          <div class="settings-row-label">
+            <strong>Speed</strong>
+            <span>How fast speech is read</span>
+          </div>
+          <div class="slider-wrapper">
+            <div class="slider-row">
+              <input
+                type="range"
+                id="pronounce-rate"
+                min="0.5"
+                max="1.5"
+                step="0.05"
+                value="1"
+                aria-label="Pronunciation speed"
+              />
+            </div>
+          </div>
+        </div>
+        <div class="settings-row pronounce-control">
+          <div class="settings-row-label">
+            <strong>Voice</strong>
+            <span>Voice used for pronunciation</span>
+          </div>
+          <select class="input-field select-narrow" id="pronounce-voice" aria-label="Pronunciation voice">
+            <option value="">Automatic</option>
+          </select>
+        </div>
+        <p class="settings-info-text" id="pronounce-unsupported" hidden>Speech isn't supported in this browser.</p>
+      </div>
+
       <!-- AI enhancements -->
       <div class="settings-section" id="ai-settings-section">
         <div class="settings-section-header">AI enhancements</div>
@@ -461,7 +505,6 @@
       <div class="footer-bottom">
         <p>Built by <a href="https://thedevricardo.netlify.app" target="_blank" rel="noopener">thedevricardo</a></p>
         <p>Data stays on your device. <a href="#" data-page="settings-page">Learn more</a></p>
-        <p>Independent project - not affiliated with Wikipedia or Xikipedia.</p>
       </div>
     </footer>
 

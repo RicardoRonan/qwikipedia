@@ -13,6 +13,9 @@ const DEFAULT_PREFS = {
   wikiLang: 'en',
   interests: [],
   aiEnabled: true,
+  pronounceEnabled: true,
+  pronounceRate: 1,
+  pronounceVoice: '',
 };
 
 const DEFAULT_ENGINE = {
@@ -172,7 +175,7 @@ export const Storage = {
 
   incrementStat(key, amount = 1) {
     const s = this.getStats();
-    s[key] = (s[key] || 0) + amount;
+    s[key] = Math.max(0, (s[key] || 0) + amount);
     _write(KEYS.STATS, s);
   },
 

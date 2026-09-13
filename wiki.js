@@ -155,14 +155,21 @@ function normalizeActionPage(page, lang = 'en') {
       String(c.title || '').replace(/^Category:/i, '').toLowerCase()
     ).filter(Boolean),
     lang,
+    coordinates: page.coordinates?.[0]
+      ? { lat: page.coordinates[0].lat, lon: page.coordinates[0].lon }
+      : null,
+    qid: page.pageprops?.wikibase_item || null,
+    isDisambiguation: page.pageprops?.disambiguation !== undefined,
   };
 }
 
 const ACTION_PROPS =
-  'prop=extracts%7Cpageimages%7Ccategories' +
+  'prop=extracts%7Cpageimages%7Ccategories%7Ccoordinates%7Cpageprops' +
   '&exintro=1&explaintext=1&exchars=520&exlimit=max' +
   '&piprop=thumbnail&pithumbsize=400&pilimit=max' +
-  '&cllimit=20&clshow=!hidden';
+  '&cllimit=20&clshow=!hidden' +
+  '&coprop=type%7Cdim%7Cglobe%7Cname&coprimary=primary' +
+  '&ppprop=wikibase_item%7Cdisambiguation';
 
 /**
  * Fetch full article data (extract + thumbnail + categories) for up to 50 titles
@@ -487,4 +494,77 @@ export async function fetchFeaturedToday(lang = 'en') {
   } catch {
     return null;
   }
+}
+
+// ---- Wikimedia Commons image search (key-free) ----
+const _commonsCache = new Map();
+export async function fetchCommonsImages(query, limit = 12) {
+  const q = (query || '').trim();
+  if (!q) return [];
+  const key = `${q}::${limit}`;
+  if (_commonsCache.has(key)) return _commonsCache.get(key);
+  const n = Math.min(Math.max(1, limit), 24);
+  try {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*` +
+      `&generator=search&gsrsearch=${encodeURIComponent(q)}&gsrnamespace=6&gsrlimit=${n}` +
+      `&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=320`;
+    const data = await fetchWithTimeout(url);
+    const pages = data?.query?.pages || {};
+    const images = Object.values(pages).map(p => {
+      const info = p.imageinfo?.[0];
+      if (!info?.thumburl) return null;
+      if (info.mime && !String(info.mime).startsWith('image/')) return null;
+      return { title: p.title, thumb: info.thumburl, full: info.url,
+        page: `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title)}` };
+    }).filter(Boolean);
+    _commonsCache.set(key, images);
+    return images;
+  } catch {
+    _commonsCache.set(key, []);
+    return [];
+  }
+}
+
+// ---- Wikidata claims (batched, cached) ----
+const _wdCache = new Map();
+function _wdClaims(ent, prop) {
+  return (ent?.claims?.[prop] || []).map(c => c?.mainsnak?.datavalue?.value).filter(Boolean);
+}
+function normalizeWikidataEntity(ent) {
+  const ids = (p) => _wdClaims(ent, p).map(v => v?.id).filter(Boolean);
+  const str = (p) => _wdClaims(ent, p).map(v => (typeof v === 'string' ? v : v?.text || v?.url)).filter(Boolean);
+  const x = str('P2002')[0], ig = str('P2003')[0];
+  return {
+    qid: ent?.id || null,
+    instanceOf: ids('P31'),
+    officialWebsite: str('P856')[0] || null,
+    spotifyArtist: str('P1902')[0] || null,
+    imdb: str('P345')[0] || null,
+    x: x ? `https://x.com/${x}` : null,
+    instagram: ig ? `https://instagram.com/${ig}` : null,
+  };
+}
+export async function fetchWikidataEntities(qids = []) {
+  const ids = [...new Set(qids.filter(Boolean))];
+  if (!ids.length) return new Map();
+  const out = new Map();
+  const missing = [];
+  for (const id of ids) {
+    if (_wdCache.has(id)) out.set(id, _wdCache.get(id));
+    else missing.push(id);
+  }
+  for (let i = 0; i < missing.length; i += 50) {
+    const chunk = missing.slice(i, i + 50);
+    try {
+      const url = `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&origin=*` +
+        `&props=claims&ids=${chunk.join('%7C')}`;
+      const data = await fetchWithTimeout(url);
+      for (const [qid, ent] of Object.entries(data?.entities || {})) {
+        const norm = normalizeWikidataEntity(ent);
+        _wdCache.set(qid, norm);
+        out.set(qid, norm);
+      }
+    } catch { /* skip chunk */ }
+  }
+  return out;
 }

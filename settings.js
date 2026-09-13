@@ -12,8 +12,9 @@ import {
 } from './auth.js';
 import { fetchSummary } from './wiki.js';
 import { ICONS } from './icons.js';
-import { escapeHtml } from './text-utils.js';
+import { escapeHtml, escapeAttr } from './text-utils.js';
 import { isAiEnabled, setAiEnabled, checkAiAvailability } from './ai.js';
+import { getVoices, isPronounceSupported } from './pronounce.js';
 import { setButtonLoading } from './ui.js';
 
 // Topic list mirrors the onboarding interest options
@@ -160,11 +161,72 @@ export function initSettings() {
   renderAccountSection();
   renderInterestsSection();
   initAiSettings();
+  initPronounceSettings();
 }
 
 /** Re-render the interests grid (called after cloud sync pulls new interests). */
 export function refreshInterests() {
   renderInterestsSection();
+}
+
+function initPronounceSettings() {
+  const toggle = document.getElementById('pronounce-enabled-toggle');
+  const rate = document.getElementById('pronounce-rate');
+  const voiceSelect = document.getElementById('pronounce-voice');
+  const note = document.getElementById('pronounce-unsupported');
+  const section = document.getElementById('pronounce-settings-section');
+
+  if (!isPronounceSupported()) {
+    section?.querySelectorAll('.pronounce-control').forEach(el => { el.classList.add('is-hidden'); });
+    if (note) note.hidden = false;
+    return;
+  }
+
+  const prefs = Storage.getPrefs();
+  if (toggle) {
+    toggle.checked = prefs.pronounceEnabled !== false;
+    toggle.addEventListener('change', () => {
+      Storage.setPrefs({ pronounceEnabled: toggle.checked });
+      syncIfLoggedIn();
+    });
+  }
+
+  if (rate) {
+    const storedRate = Number(prefs.pronounceRate);
+    rate.value = Number.isFinite(storedRate) ? storedRate : 1;
+    rate.addEventListener('input', () => {
+      Storage.setPrefs({ pronounceRate: parseFloat(rate.value) });
+      syncIfLoggedIn();
+    });
+  }
+
+  function populateVoices() {
+    if (!voiceSelect) return;
+    const voices = getVoices();
+    const currentPrefs = Storage.getPrefs();
+    const current = currentPrefs.pronounceVoice || '';
+    const wikiLang = currentPrefs.wikiLang === 'simple' ? 'en' : (currentPrefs.wikiLang || 'en');
+    const base = String(wikiLang).split('-')[0].toLowerCase();
+    const sorted = [...voices].sort((a, b) => {
+      const aMatch = (a.lang || '').toLowerCase().startsWith(base) ? 0 : 1;
+      const bMatch = (b.lang || '').toLowerCase().startsWith(base) ? 0 : 1;
+      if (aMatch !== bMatch) return aMatch - bMatch;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    voiceSelect.innerHTML = `<option value="">Automatic</option>` +
+      sorted.map(v => `<option value="${escapeAttr(v.voiceURI)}">${escapeHtml(`${v.name} (${v.lang})`)}</option>`).join('');
+    voiceSelect.value = current;
+    if (current && voiceSelect.value !== current) voiceSelect.value = '';
+  }
+
+  populateVoices();
+  if (voiceSelect) {
+    voiceSelect.addEventListener('change', () => {
+      Storage.setPrefs({ pronounceVoice: voiceSelect.value });
+      syncIfLoggedIn();
+    });
+  }
+  window.speechSynthesis?.addEventListener?.('voiceschanged', populateVoices);
 }
 
 function initAiSettings() {

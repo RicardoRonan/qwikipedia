@@ -177,11 +177,15 @@ function mergeLikedArticles(cloudArr, localArr) {
 function mergeStats(cloud, local) {
   const c = cloud && typeof cloud === 'object' ? cloud : {};
   const l = local || {};
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? Math.floor(x) : 0; };
+  // Math.max is intentional: totals are cumulative and must not be summed across
+  // devices (that would double-count). A true cross-device merge needs per-device
+  // deltas, which is out of scope here.
   return {
-    totalSeen: Math.max(Number(c.totalSeen) || 0, Number(l.totalSeen) || 0),
-    totalLiked: Math.max(Number(c.totalLiked) || 0, Number(l.totalLiked) || 0),
-    totalDismissed: Math.max(Number(c.totalDismissed) || 0, Number(l.totalDismissed) || 0),
-    totalTimeMs: Math.max(Number(c.totalTimeMs) || 0, Number(l.totalTimeMs) || 0),
+    totalSeen:      Math.max(n(c.totalSeen),      n(l.totalSeen)),
+    totalLiked:     Math.max(n(c.totalLiked),     n(l.totalLiked)),
+    totalDismissed: Math.max(n(c.totalDismissed), n(l.totalDismissed)),
+    totalTimeMs:    Math.max(n(c.totalTimeMs),    n(l.totalTimeMs)),
   };
 }
 

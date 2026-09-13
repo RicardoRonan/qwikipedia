@@ -14,6 +14,7 @@ const CORE = [
   './auth.js',
   './toast.js',
   './icons.js',
+  './pronounce.js',
   './Qwikipedia%20logo.png',
 ];
 

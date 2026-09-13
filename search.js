@@ -4,6 +4,9 @@ import { cleanWikipediaText, escapeHtml, escapeAttr } from './text-utils.js';
 import { ICONS } from './icons.js';
 import { refineSearchQuery, getSearchSuggestions, isAiEnabled, bindYoutubeLinks } from './ai.js';
 import { stateBox, skeletonCardsHtml, setBusy } from './ui.js';
+import { toggleDeepDive } from './deepdive.js';
+
+const _searchArticles = new Map();
 
 let _suggestionsLoaded = false;
 
@@ -173,6 +176,7 @@ export async function doSearch(query, opts = {}) {
       feed.appendChild(createSearchCard(a));
     });
     bindYoutubeLinks(feed);
+    bindSearchDeepDive(container);
     setBusy(container, false);
   } catch (err) {
     container.innerHTML = stateBox({
@@ -185,10 +189,27 @@ export async function doSearch(query, opts = {}) {
   }
 }
 
+function bindSearchDeepDive(container) {
+  if (!container || container.dataset.deepdiveBound) return;
+  container.dataset.deepdiveBound = '1';
+  container.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-deepdive');
+    if (!btn) return;
+    e.preventDefault();
+    const card = btn.closest('.card');
+    const title = card?.dataset?.title || '';
+    toggleDeepDive(btn, card, _searchArticles.get(title) || title);
+  });
+}
+
 function createSearchCard(article) {
   const el = document.createElement('div');
   el.className = 'card';
   el.dataset.title = article.title;
+  _searchArticles.set(article.title, article);
+  if (article.qid) el.dataset.qid = article.qid;
+  if (article.coordinates) el.dataset.coords = `${article.coordinates.lat},${article.coordinates.lon}`;
+  if (article.categories?.length) el.dataset.categories = article.categories.slice(0, 8).join('|');
   const lang = Storage.getPrefs().wikiLang || 'en';
   const displayTitle = article.displayTitle || article.title || '';
   const safeUrl = article.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.title)}`;
@@ -206,6 +227,11 @@ function createSearchCard(article) {
           <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(displayTitle)}" aria-label="Watch related videos on YouTube">
             ${ICONS.youtube || '▶'} Watch related videos
           </a>
+        </div>
+        <div class="card-icon-group">
+          <button type="button" class="card-icon-btn btn-deepdive" data-deepdive-topic="${escapeAttr(displayTitle)}" aria-label="Deep dive research">
+            ${ICONS.compass}
+          </button>
         </div>
       </div>
     </div>

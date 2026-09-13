@@ -4,15 +4,21 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 
 ## Features
 
+- **Pronunciation (browser speech)** on feed cards
 - **Infinite scroll feed** of Wikipedia articles with images, title, and extract
 - **Like / Not interested / Skip** interactions that train a local recommendation engine
+- **Saved for later** list and **Liked** history, both synced when signed in
+- **Deep Dive** research panel on every card (free-courses, e-books, AI search, video, maps)
+- **Context-aware links** (maps, official sites, Spotify) and an inline **Images** tab from Wikimedia Commons
+- **Feed interests filter** - see and change the topics shaping your feed from the feed itself
+- **New-articles pill** when background refresh brings in fresh content
+- **Feather Icons** (v4.29.0, MIT) - single vendored icon pack, no runtime dependency
 - **Light / Dark / System** theme with instant toggle
-- **Text size slider** (80%–130%) with live preview
+- **Text size slider** (80%-130%) with live preview
 - **Wikipedia language selector** (English, Simple English, French, and more)
 - **Supabase auth** (email/password) for cross-device preference sync
-- **Wikipedia username link** - connect your Wikipedia profile
 - **No server needed** - recommendation logic runs entirely in your browser
-- **All data stays on your device** unless you sign in (then only theme + text size sync to the cloud)
+- **All data stays on your device** unless you sign in
 
 ## Quick Start
 
@@ -24,17 +30,27 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 
 | File | Purpose |
 |------|---------|
-| `index.html` | App shell, nav, settings page markup, auth modal |
-| `styles.css` | All styles: light/dark themes, typography scale, layout |
-| `app.js` | Bootstrap, feed rendering, routing, auth modal logic |
-| `ui.js` | Shared loading, empty/error, and button-state helpers |
-| `engine.js` | Recommendation engine: weights, interaction recording, feed batch |
-| `wiki.js` | Wikipedia API adapters (REST summary, search, random, featured) |
+| `index.html` | App shell, nav, onboarding, settings/account/search/saved pages, auth modal, lightbox |
+| `styles.css` | All styles: light/dark themes, tokens, typography scale, layout (design-system source of truth) |
+| `app.js` | Bootstrap, feed rendering, infinite scroll, saved/likes, routing, card actions |
+| `engine.js` | Recommendation engine: topic weights, interaction recording, feed batch assembly |
+| `wiki.js` | Wikimedia adapters: batched Action API, REST summary, search, random, featured, Commons/Wikidata fetchers, rate-limit limiter |
+| `entity.js` | Article type classification and context-aware external links |
+| `cache.js` | Supabase-backed article cache (prefetch, warm, prune) |
+| `deepdive.js` | Deep Dive research panel (tabbed links + Commons images per article) |
+| `icons.js` | Feather Icons v4.29.0 (MIT) SVG strings |
+| `search.js` | Search page and result cards |
 | `storage.js` | Single interface for all localStorage read/write |
-| `settings.js` | Theme + text scale controls, account/profile section |
+| `settings.js` | Theme, text scale, interests, account/profile sections |
 | `auth.js` | Supabase Auth: sign in, sign up, session, profile table CRUD |
+| `account.js` | Account page rendering |
 | `ai.js` | AI layer: YouTube query generation, search refinement (Edge Function + heuristics) |
 | `ai-heuristics.js` | Local fallbacks when the AI helper is offline |
+| `text-utils.js` | Text cleaning/normalisation helpers |
+| `ui.js` | Shared loading, empty/error, and button-state helpers |
+| `toast.js` | Toast notifications |
+| `usePullToRefresh.js` | Pull-to-refresh hook |
+| `sw.js` | Service worker: app-shell + Wikimedia API/asset caching |
 | `supabase/functions/ai/` | Supabase Edge Function (Groq) - see `AI_SETUP.md` |
 
 ### AI enhancements (optional)
@@ -43,11 +59,14 @@ Deploy the `ai` Edge Function with a free [Groq](https://console.groq.com) API k
 
 ## Data Sources
 
-- **Wikimedia REST API** - article summaries and thumbnails
-  - `https://en.wikipedia.org/api/rest_v1/page/summary/{title}`
-- **MediaWiki Action API** - search and random articles
-  - `https://en.wikipedia.org/w/api.php`
+- **MediaWiki Action API** (primary) - batched article data in one request:
+  `prop=extracts|pageimages|categories|coordinates|pageprops` (intro text, thumbnail, categories, coords, Wikidata QID), plus
+  `list=random` / `generator=random` and `list=search`. Endpoint: `https://<lang>.wikipedia.org/w/api.php`
+- **Wikimedia REST API** - single-article summaries for previews and Deep Dive:
+  `https://<lang>.wikipedia.org/api/rest_v1/page/summary/{title}`
 - **Wikimedia Featured Content API** - featured article of the day
+- **Wikidata** (`wbgetentities`) - lazy, batched, cached claims (`P31`, official site, Spotify, socials) when a Deep Dive panel opens for an article with a QID
+- **Wikimedia Commons** - lazy, cached image search for the Deep Dive Images tab (key-free)
 
 ## Wikimedia API Rate-Limit Compliance
 
@@ -60,13 +79,14 @@ for anonymous browser traffic and avoid the much stricter **10/min** "unidentifi
 | Practice | Implementation |
 |----------|----------------|
 | Browser User-Agent | We rely on the browser's built-in `User-Agent` header, which puts us in the "Requests made from a web browser by an unauthenticated user" 200/min bucket. We deliberately **don't** send a custom `Api-User-Agent` header because any non-safelisted header on a cross-origin `fetch` triggers a CORS preflight `OPTIONS` request - doubling the request count against Wikimedia's per-IP limit. |
-| Max 3 concurrent requests | `CONCURRENCY = 2` in `wiki.js` - always under the guideline |
+| Max 3 concurrent requests | `CONCURRENCY = 3` in `wiki.js` - matches the Wikimedia guideline |
 | Soft per-minute cap | `REQUESTS_PER_MINUTE_CAP = 80` sliding-window throttle in `wiki.js` - stays far under 200/min |
 | Respect `Retry-After` | `parseRetryAfterMs()` honors the server header, capped at 30s to avoid stale long backoffs |
 | Exponential fallback on network errors | 600ms, 1200ms, 1800ms between transient retries (max 2 attempts) |
 | Aggressive local caching | LRU of up to 140 REST summaries in `localStorage` (8-day TTL) - cached articles render instantly and are served silently during backoff |
 | No credentials | `credentials: 'omit'` on all Wikimedia requests |
-| Conservative batch sizes | 8 articles per load, 10-title random pool, 6-title topic search |
+| Batched, conservative requests | Article data (extract + thumbnail + categories) fetched in a single Action API request; 10 articles per load, 12-title random pool, 8-title topic search |
+| Batched Supabase writes | Cached articles are queued and upserted in one request per language, not one per article |
 | Background refresh | Cached-first rendering + silent background fetch; only first-run shows the % spinner |
 
 **Rate-limit cheat sheet (from the official policy):**
@@ -84,13 +104,12 @@ On a `429 Too Many Requests` or `503 Service Unavailable`, Qwikipedia pauses new
 
 ## How the Algorithm Works
 
-1. Each article is tagged with inferred topics (science, history, technology, arts, etc.)
-2. When you `Like` an article, those topics gain weight (+2)
-3. `Not interested` drops topic weights (-3)
-4. `Skip` is a small negative signal (-0.5)
-5. New batches are 70% weighted-topic search, 30% random exploration
-6. Diversity rules cap repeat topics per batch
-7. Weights decay slightly each session to prevent the feed from getting too narrow
+1. Each article is tagged with inferred topics (science, history, technology, arts, etc.) from its Wikipedia categories
+2. `Like` adds weight to those topics (+2); `Not interested` drops them (-3); `Skip` is a small negative (-0.5)
+3. Each batch is built from one weighted-topic search plus a random-title pool, filtered by seen/dismissed history
+4. Diversity rules cap how many articles from one topic appear per batch
+5. When the user has selected interests, articles are filtered to those topics
+6. Weights decay slightly each session so the feed never narrows permanently
 
 ## Cloud Sync (Supabase)
 

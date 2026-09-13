@@ -12,6 +12,7 @@ import { bindYoutubeLinks, prefetchVisibleYoutubeQueries } from './ai.js';
 import { usePullToRefresh } from './usePullToRefresh.js';
 import { warmArticleCache, hasCacheClient, pruneStaleCache } from './cache.js';
 import { toggleDeepDive } from './deepdive.js';
+import { bindPronounceButtons, initPronounce, stopSpeaking } from './pronounce.js';
 import {
   setHidden,
   setBusy,
@@ -33,16 +34,30 @@ let scrollObserver = null;
 let prefetchObserver = null;
 
 // Session tracking
-const _sessionStart = Date.now();
 let _sessionSeen = 0;
 let _sessionLiked = 0;
 let _sessionDismissed = 0;
 
-function getSessionTimeMs() { return Date.now() - _sessionStart; }
+let _sessionMs = 0;                              // active time this page-load
+let _flushedMs = 0;                              // portion already written to storage
+let _activeSince = (typeof document !== 'undefined' && document.visibilityState === 'visible')
+  ? Date.now() : null;
 
-// Flush elapsed session time to storage on page hide/unload
+function _elapsedNow() { return _sessionMs + (_activeSince ? Date.now() - _activeSince : 0); }
+function getSessionTimeMs() { return _elapsedNow(); }
+function getUnflushedSessionMs() { return _elapsedNow() - _flushedMs; }
+
+function _pauseClock() { if (_activeSince) { _sessionMs += Date.now() - _activeSince; _activeSince = null; } }
+function _resumeClock() { if (!_activeSince && document.visibilityState === 'visible') _activeSince = Date.now(); }
+
+// Add only the delta since the last flush; resets the baseline so nothing is double-counted.
 function flushSessionTime() {
-  Storage.incrementStat('totalTimeMs', getSessionTimeMs());
+  _pauseClock();
+  const delta = _sessionMs - _flushedMs;
+  if (delta <= 0) { _resumeClock(); return; }
+  _flushedMs = _sessionMs;
+  Storage.incrementStat('totalTimeMs', delta);
+  _resumeClock();
 }
 
 // ===== Routing (simple in-page) =====
@@ -137,9 +152,7 @@ function showWelcomeBack() {
     return;
   }
 
-  const timeStr = totalTimeMs >= 3600000
-    ? `${Math.floor(totalTimeMs / 3600000)}h`
-    : `${Math.floor(totalTimeMs / 60000)}m`;
+  const timeStr = totalTimeMs < 60000 ? 'less than a minute' : formatTime(totalTimeMs);
   const likedLabel = totalLiked === 1 ? 'article' : 'articles';
 
   el.innerHTML = `
@@ -150,6 +163,24 @@ function showWelcomeBack() {
 
 // ===== Card rendering =====
 
+const _cardArticles = new Map();
+
+let _viewObserver = null;
+function getViewObserver() {
+  if (_viewObserver) return _viewObserver;
+  _viewObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const card = entry.target;
+      if (!entry.isIntersecting || card.dataset.counted === '1') continue;
+      card.dataset.counted = '1';
+      Storage.incrementStat('totalSeen');
+      _sessionSeen++;
+      _viewObserver.unobserve(card);
+    }
+  }, { threshold: 0.5 });
+  return _viewObserver;
+}
+
 function createCard(article, featured = false) {
   const el = document.createElement('div');
   el.className = 'card';
@@ -159,6 +190,7 @@ function createCard(article, featured = false) {
 
   const lang = Storage.getPrefs().wikiLang || 'en';
   const displayTitleRaw = article.displayTitle || article.title || '';
+  _cardArticles.set(article.title, article);
   const safeUrl = article.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.title)}`;
   const imageHtml = article.image
     ? `<div class="card-image-wrap"><img class="card-image media" src="${escapeAttr(article.image)}" alt="${escapeAttr(displayTitleRaw)}" loading="lazy" onerror="this.parentElement.classList.add('is-hidden')"></div>`
@@ -171,7 +203,10 @@ function createCard(article, featured = false) {
   el.innerHTML = `
     <div class="card-body">
       ${featuredBadge}
-      <h2 class="card-title">${escapeHtml(cleanWikipediaText(displayTitleRaw))}</h2>
+      <div class="card-title-row">
+        <h2 class="card-title">${escapeHtml(cleanWikipediaText(displayTitleRaw))}</h2>
+        <button class="card-icon-btn btn-pronounce" data-pronounce-text="${escapeAttr(cleanWikipediaText(displayTitleRaw))}" aria-label="Pronounce ${escapeAttr(cleanWikipediaText(displayTitleRaw))}" aria-pressed="false">${ICONS.volume2 || ''}</button>
+      </div>
       <p class="card-extract">${escapeHtml(cleanWikipediaText(article.extract || ''))}</p>
       ${imageHtml}
       <div class="card-actions">
@@ -219,9 +254,13 @@ function createCard(article, featured = false) {
   if (deepDiveBtn) {
     deepDiveBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      toggleDeepDive(deepDiveBtn, el, displayTitleRaw);
+      toggleDeepDive(deepDiveBtn, el, _cardArticles.get(article.title) || displayTitleRaw);
     });
   }
+
+  if (article.qid) el.dataset.qid = article.qid;
+  if (article.coordinates) el.dataset.coords = `${article.coordinates.lat},${article.coordinates.lon}`;
+  if (article.categories?.length) el.dataset.categories = article.categories.slice(0, 8).join('|');
 
   setupExtractExpansion(el, extractEl);
 
@@ -231,6 +270,7 @@ function createCard(article, featured = false) {
     g.from(el, { opacity: 0, y: 12, duration: 0.3, ease: 'power2.out', clearProps: 'all' });
   }
 
+  getViewObserver().observe(el);
   return el;
 }
 
@@ -258,6 +298,15 @@ function setupExtractExpansion(cardEl, extractEl) {
   toggle.setAttribute('aria-expanded', 'false');
   toggle.textContent = 'Show more';
   extractEl.after(toggle);
+
+  const listen = document.createElement('button');
+  listen.type = 'button';
+  listen.className = 'card-extract-listen';
+  listen.dataset.pronounceText = (extractEl.textContent || '').trim();
+  listen.setAttribute('aria-label', 'Listen to the description');
+  listen.setAttribute('aria-pressed', 'false');
+  listen.innerHTML = `${ICONS.volume2 || ''} Listen`;
+  toggle.after(listen);
 }
 
 const _extractFetchCache = new Map();
@@ -332,6 +381,8 @@ function animateLike(cardEl, likeBtn, article) {
   const alreadyLiked = Storage.isLiked(article.title);
   if (alreadyLiked) {
     Storage.removeLiked(article.title);
+    Storage.incrementStat('totalLiked', -1);
+    if (_sessionLiked > 0) _sessionLiked--;
     likeBtn.innerHTML = ICONS.heart;
     likeBtn.classList.remove('liked');
     likeBtn.setAttribute('aria-label', 'Like this article');
@@ -345,6 +396,9 @@ function animateLike(cardEl, likeBtn, article) {
       image: article.image || null,
       url: article.url || null,
       lang: article.lang || 'en',
+      categories: article.categories || [],
+      coordinates: article.coordinates || null,
+      qid: article.qid || null,
     });
     Storage.incrementStat('totalLiked');
     _sessionLiked++;
@@ -365,6 +419,7 @@ function animateLike(cardEl, likeBtn, article) {
 function animateDismiss(cardEl, article) {
   const g = gsap();
 
+  stopSpeaking();
   recordInteraction(article, 'dislike');
   Storage.incrementStat('totalDismissed');
   _sessionDismissed++;
@@ -401,6 +456,9 @@ function animateSave(cardEl, saveBtn, article) {
       image: article.image || null,
       url: article.url || null,
       lang: article.lang || 'en',
+      categories: article.categories || [],
+      coordinates: article.coordinates || null,
+      qid: article.qid || null,
     });
     saveBtn.innerHTML = ICONS.bookmarkFilled;
     saveBtn.classList.add('saved');
@@ -488,6 +546,11 @@ function articlePayloadFromCardDom(card) {
   const image = img?.getAttribute('src') || null;
   const url = readLink?.getAttribute('href') || null;
   const lang = Storage.getPrefs().wikiLang || 'en';
+  const qid = card.dataset.qid || null;
+  const categories = card.dataset.categories ? card.dataset.categories.split('|') : [];
+  const coordinates = card.dataset.coords
+    ? (([lat, lon]) => ({ lat: Number(lat), lon: Number(lon) }))(card.dataset.coords.split(','))
+    : null;
   return {
     title,
     displayTitle,
@@ -495,6 +558,9 @@ function articlePayloadFromCardDom(card) {
     image,
     url: url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
     lang,
+    qid,
+    categories,
+    coordinates,
   };
 }
 
@@ -572,6 +638,7 @@ function afterFeedCardsUpdated(container) {
   if (!container) return;
   bindYoutubeLinks(container);
   prefetchVisibleYoutubeQueries(container);
+  bindPronounceButtons(container);
 }
 
 function showNewContentPill() {
@@ -611,8 +678,6 @@ function appendUniqueArticles(container, articles = [], { background = false } =
     const card = createCard(a);
     if (!firstAdded) firstAdded = card;
     container.appendChild(card);
-    Storage.incrementStat('totalSeen');
-    _sessionSeen++;
     added++;
   });
   if (added) afterFeedCardsUpdated(container);
@@ -701,6 +766,7 @@ function renderCachedThenRefresh(container, cached, lang) {
     if (container.querySelector(`.card[data-title="${CSS.escape(featured.title)}"]`)) return;
     const card = createCard(featured, true);
     container.insertBefore(card, container.firstChild);
+    bindPronounceButtons(card);
     if (!_newContentAnchor) _newContentAnchor = card;
     _pendingNewCount += 1;
     showNewContentPill();
@@ -1596,11 +1662,11 @@ function renderStatsPage() {
   const engine = Storage.getEngine();
 
   const sessionTimeSec = Math.floor(getSessionTimeMs() / 1000);
-  const totalTimeSec = Math.floor((totals.totalTimeMs + getSessionTimeMs()) / 1000);
+  const totalTimeSec = Math.floor((totals.totalTimeMs + getUnflushedSessionMs()) / 1000);
 
   // Stat cards
   const stats = [
-    { label: 'Articles seen',      session: _sessionSeen,      total: totals.totalSeen,      icon: ICONS.arrowRight },
+    { label: 'Articles viewed',    session: _sessionSeen,      total: totals.totalSeen,      icon: ICONS.arrowRight },
     { label: 'Liked',              session: _sessionLiked,     total: totals.totalLiked,     icon: ICONS.heart },
     { label: 'Not interested',     session: _sessionDismissed, total: totals.totalDismissed, icon: ICONS.x },
     { label: 'Time spent (session)', session: null,            total: null,                  timeSession: sessionTimeSec, timeTotal: totalTimeSec, icon: ICONS.refreshCw },
@@ -1756,7 +1822,9 @@ function renderSavedPage() {
     const diveBtn = e.target.closest('.btn-deepdive');
     if (diveBtn) {
       const card = diveBtn.closest('.like-card');
-      toggleDeepDive(diveBtn, card, diveBtn.dataset.deepdiveTopic || '');
+      const title = card?.dataset?.title || '';
+      const saved = (Storage.getHistory().savedArticles || []).find(a => a?.title === title);
+      toggleDeepDive(diveBtn, card, saved || diveBtn.dataset.deepdiveTopic || '');
       return;
     }
     const btn = e.target.closest('[data-unsave-title]');
@@ -1779,8 +1847,15 @@ function renderSavedCardHtml(title, article, lang) {
   const thumb = image
     ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeAttr(image)}')" aria-hidden="true"></div>`
     : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
+  const qidAttr = article?.qid ? ` data-qid="${escapeAttr(article.qid)}"` : '';
+  const catsAttr = article?.categories?.length
+    ? ` data-categories="${escapeAttr(article.categories.slice(0, 8).join('|'))}"`
+    : '';
+  const coordsAttr = article?.coordinates
+    ? ` data-coords="${escapeAttr(`${article.coordinates.lat},${article.coordinates.lon}`)}"`
+    : '';
   return `
-    <div class="like-card">
+    <div class="like-card" data-title="${escapeAttr(title)}"${qidAttr}${catsAttr}${coordsAttr}>
       ${thumb}
       <div class="like-card-body">
         <a class="like-card-title" href="${escapeAttr(url)}" target="_blank" rel="noopener">${escapeHtml(display)}</a>
@@ -2127,6 +2202,8 @@ async function init() {
       flushSessionTime();
       snapshotFeedSession();
       if (currentUser) scheduleSyncPrefs(currentUser.id, 0);
+    } else {
+      _resumeClock();
     }
   });
   window.addEventListener('pagehide', () => {
@@ -2154,6 +2231,7 @@ async function init() {
 
   // Lightbox
   initLightbox();
+  initPronounce();
 
   // Click-to-expand delegation for card extracts
   initExtractClickDelegation();
@@ -2167,6 +2245,8 @@ async function init() {
 
     const doRemove = () => {
       Storage.removeLiked(title);
+      Storage.incrementStat('totalLiked', -1);
+      if (_sessionLiked > 0) _sessionLiked--;
       const eng = Storage.getEngine();
       const weights = { ...eng.topicWeights };
       Storage.setEngine({ topicWeights: weights });
