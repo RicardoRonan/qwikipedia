@@ -132,3 +132,14 @@ RLS policies on `profiles` ensure users can only read/upsert their own row (`aut
 - If you're signed out, nothing is sent to Supabase
 
 Built by [thedevricardo](https://thedevricardo.netlify.app)
+
+## Credits & Acknowledgements
+
+- Inspired by [Xikipedia](https://xikipedia.org) by [rebane2001](https://github.com/rebane2001) - an independent demonstration of local, non-ML feed ranking. Qwikipedia is an independent, unaffiliated re-imagining with a different architecture (live Wikipedia APIs, multi-language support, accounts and cloud sync). **No Xikipedia code is used in this project.**
+- Article text and images are sourced from Wikipedia under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); see the [MediaWiki API](https://www.mediawiki.org/wiki/API:Main_page) terms of use.
+
+## License
+
+Released under the [MIT License](./LICENSE). © 2026 thedevricardo.
+
+Qwikipedia is an independent project and is **not affiliated with, endorsed by, or sponsored by** the Wikimedia Foundation, Wikipedia, or Xikipedia.

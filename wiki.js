@@ -142,6 +142,77 @@ function normalizeSummary(raw, lang = 'en') {
   };
 }
 
+// Normalize a raw Action API `query.pages` entry into our card model.
+function normalizeActionPage(page, lang = 'en') {
+  const title = cleanWikipediaText(page.title || '');
+  return {
+    title,
+    displayTitle: title,
+    extract: cleanWikipediaText(page.extract || ''),
+    image: page.thumbnail?.source || null,
+    url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
+    categories: (page.categories || []).map(c =>
+      String(c.title || '').replace(/^Category:/i, '').toLowerCase()
+    ).filter(Boolean),
+    lang,
+  };
+}
+
+const ACTION_PROPS =
+  'prop=extracts%7Cpageimages%7Ccategories' +
+  '&exintro=1&explaintext=1&exchars=520&exlimit=max' +
+  '&piprop=thumbnail&pithumbsize=400&pilimit=max' +
+  '&cllimit=20&clshow=!hidden';
+
+/**
+ * Fetch full article data (extract + thumbnail + categories) for up to 50 titles
+ * in a SINGLE Action API request. Replaces the old per-title REST summary loop
+ * plus the separate categories request.
+ */
+export async function fetchArticlesBatch(titles, lang = 'en') {
+  if (!titles?.length) return [];
+  const out = [];
+  // Action API `titles` limit is 50 per request.
+  for (let i = 0; i < titles.length; i += 50) {
+    const chunk = titles.slice(i, i + 50);
+    const joined = chunk.map(encodeURIComponent).join('%7C');
+    const url = `${baseUrl(lang)}/w/api.php?action=query&format=json&origin=*&redirects=1&titles=${joined}&${ACTION_PROPS}`;
+    const data = await fetchWithTimeout(url);
+    const pages = data?.query?.pages || {};
+    for (const page of Object.values(pages)) {
+      if (page.missing !== undefined) continue;
+      const article = normalizeActionPage(page, lang);
+      if (article.title) {
+        rememberArticle(article, lang);
+        out.push(article);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Fetch N random articles with extract + thumbnail + categories in ONE request
+ * (Xikipedia-style bulk fill). Falls back to list=random + fetchArticlesBatch.
+ */
+export async function fetchRandomArticles(count = 20, lang = 'en') {
+  const n = Math.min(Math.max(1, count), 20);
+  try {
+    const url = `${baseUrl(lang)}/w/api.php?action=query&format=json&origin=*&generator=random&grnnamespace=0&grnlimit=${n}&${ACTION_PROPS}`;
+    const data = await fetchWithTimeout(url);
+    const pages = data?.query?.pages || {};
+    const out = Object.values(pages)
+      .map(p => normalizeActionPage(p, lang))
+      .filter(a => a.title);
+    if (out.length) {
+      out.forEach(a => rememberArticle(a, lang));
+      return out;
+    }
+  } catch { /* fall through */ }
+  const titles = await fetchRandomTitles(n, lang).catch(() => []);
+  return fetchArticlesBatch(titles, lang).catch(() => []);
+}
+
 /** Local LRU of raw REST `/page/summary` JSON - inspired by bundled-data demos; cuts repeat/article traffic. */
 const SUMMARY_DISK_KEY = 'sw_rest_summary_v1';
 const SUMMARY_DISK_MAX_ENTRIES = 140;
@@ -243,18 +314,47 @@ export async function fetchSummary(title, lang = 'en') {
 
 // Track which titles have already been dispatched to the cache to avoid re-sends
 const _cacheDispatched = new Set();
+const _cacheQueue = new Map(); // `${userId}\u0001${lang}` -> Map<title, article>
+let _cacheFlushTimer = null;
+
+function flushCacheQueue() {
+  _cacheFlushTimer = null;
+  const batches = [..._cacheQueue.entries()];
+  _cacheQueue.clear();
+  for (const [key, titleMap] of batches) {
+    const [userId, lang] = key.split('\u0001');
+    const articles = [...titleMap.values()];
+    if (articles.length) storeArticleCache(userId, lang, articles).catch(() => {});
+  }
+}
 
 function dispatchToBackgroundCache(article, lang) {
   if (!_cacheUserId || !hasCacheClient()) return;
   const key = `${_cacheUserId}::${lang}::${article.title}`;
   if (_cacheDispatched.has(key)) return;
   _cacheDispatched.add(key);
-  storeArticleCache(_cacheUserId, lang, [article]).catch(() => {});
-  // Keep the set from growing unbounded
+
+  const qKey = `${_cacheUserId}\u0001${lang}`;
+  if (!_cacheQueue.has(qKey)) _cacheQueue.set(qKey, new Map());
+  _cacheQueue.get(qKey).set(article.title, article);
+
   if (_cacheDispatched.size > 500) {
     const arr = [..._cacheDispatched];
     arr.slice(0, 100).forEach(k => _cacheDispatched.delete(k));
   }
+  if (!_cacheFlushTimer) _cacheFlushTimer = setTimeout(flushCacheQueue, 1200);
+}
+
+/** Persist a batched Action API article so cache-first paint and 429 fallback still work. */
+function rememberArticle(article, lang) {
+  setPersistedSummaryJson(lang, article.title, {
+    title: article.title,
+    displaytitle: article.displayTitle,
+    extract: article.extract,
+    thumbnail: article.image ? { source: article.image } : undefined,
+    content_urls: { desktop: { page: article.url } },
+  });
+  dispatchToBackgroundCache(article, lang);
 }
 
 // Fetch random article titles (returns array of title strings)
@@ -324,19 +424,16 @@ export async function fetchCategoriesBatch(titles, lang = 'en') {
   return map;
 }
 
-// Fetch summaries in parallel (concurrency-limited by the global CONCURRENCY limiter).
-// Categories fetched once for titles that actually got summaries.
 /**
- * @param {string[]} titles
- * @param {string} [lang='en']
- * @param {{ includeCategories?: boolean, onChunkProgress?: (info: { chunkIndex: number, totalChunks: number }) => void }} [opts]
- *   Include categories (extra Action API batch). Omit on first batch for faster time-to-cards.
+ * Fetch article data for a list of titles. Categories now arrive in the same
+ * batched request, so there is no separate categories round-trip.
+ * `opts.includeCategories` is accepted for backward compatibility and ignored.
  */
 export async function fetchSummaryBatch(titles, lang = 'en', opts = {}) {
-  const { includeCategories = true, onChunkProgress } = opts;
+  const { onChunkProgress } = opts;
   if (!titles.length) return [];
 
-  // Check Supabase cache for as many titles as possible (signed-in users)
+  // Supabase cache check for signed-in users (unchanged)
   let cachedMap = new Map();
   if (_cacheUserId && hasCacheClient() && titles.length > 2) {
     try {
@@ -346,40 +443,28 @@ export async function fetchSummaryBatch(titles, lang = 'en', opts = {}) {
     }
   }
 
-  // Determine which titles still need fetching from Wikipedia
   const missing = titles.filter(t => !cachedMap.has(t));
   const merged = [...cachedMap.values()];
 
-  // Fetch all missing summaries in parallel — the CONCURRENCY limiter handles throttle
   if (missing.length > 0) {
-    const SUMMARY_CHUNK = 8;
-    const totalChunks = Math.max(1, Math.ceil(missing.length / SUMMARY_CHUNK));
-    const settled = await Promise.allSettled(missing.map(t => fetchSummary(t, lang)));
-    for (const [i, r] of settled.entries()) {
-      if (r.status !== 'fulfilled') continue;
-      const article = r.value;
-      if (article.extract?.length > 50) merged.push(article);
+    const BATCH = 20;
+    const totalChunks = Math.max(1, Math.ceil(missing.length / BATCH));
+    for (let i = 0; i < missing.length; i += BATCH) {
+      const chunk = missing.slice(i, i + BATCH);
+      try {
+        const arts = await fetchArticlesBatch(chunk, lang);
+        for (const a of arts) {
+          if (a.extract?.length > 50) merged.push(a);
+        }
+      } catch { /* skip chunk, keep the rest */ }
       onChunkProgress?.({
-        chunkIndex: Math.min(Math.floor(i / SUMMARY_CHUNK), totalChunks - 1),
+        chunkIndex: Math.min(Math.floor(i / BATCH), totalChunks - 1),
         totalChunks,
       });
     }
   }
 
-  let categoryMap = new Map();
-  if (includeCategories && merged.length) {
-    const okTitles = merged.map(a => a.title);
-    try {
-      categoryMap = await fetchCategoriesBatch(okTitles, lang);
-    } catch {
-      categoryMap = new Map();
-    }
-  }
-
-  return merged.map(a => ({
-    ...a,
-    categories: categoryMap.get(a.title) || [],
-  }));
+  return merged;
 }
 
 // Get featured article of the day (bonus quality content)

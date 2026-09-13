@@ -268,7 +268,7 @@ export async function fetchFeedBatch(lang = 'en', batchSize = 10, onProgress) {
   const candidates = await buildCandidatePool(lang, onProgress);
 
   // Shuffle - only fetch summaries for what we realistically need (keeps request count low)
-  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 6);
+  const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, batchSize + 2);
 
   const articles = await fetchSummaryBatch(shuffled, lang, {
     includeCategories: true,

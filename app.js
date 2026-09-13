@@ -407,14 +407,18 @@ let _didSeenRecovery = false;
 const FEED_SESSION_CACHE_KEY = 'sw_feed_session_cache_v1';
 const FEED_PERSISTED_CACHE_KEY = 'sw_feed_cache_v1';
 
-function startPrefetch(lang) {
-  // Never start a second prefetch if one is already in flight for this language
-  if (_prefetchPromise && _prefetchLang === lang) return;
+function fetchBatchSingleFlight(lang) {
+  // Reuse an in-flight background batch if one exists for this language
+  if (_prefetchPromise && _prefetchLang === lang) return _prefetchPromise;
   // Don't fan out network calls while Wikipedia is asking us to back off.
-  // The sentinel will re-arm and prefetch will resume once cooldown expires.
-  if (getApiBackoffRemainingMs() > 1000) return;
+  if (getApiBackoffRemainingMs() > 1000) return Promise.resolve([]);
   _prefetchLang    = lang;
   _prefetchPromise = fetchFeedBatch(lang, BATCH_SIZE).catch(() => []);
+  return _prefetchPromise;
+}
+
+function startPrefetch(lang) {
+  fetchBatchSingleFlight(lang); // fire-and-forget
 }
 
 function consumePrefetch() {
@@ -584,17 +588,20 @@ function refreshLoadingStatus() {
 /** Schedule a silent background refresh (skipped while we're in backoff). */
 function silentBackgroundRefresh(container, lang) {
   if (getApiBackoffRemainingMs() > 1000) {
-    // Wait out the cooldown, then try once more (silently).
     const wait = getApiBackoffRemainingMs() + 250;
     setTimeout(() => silentBackgroundRefresh(container, lang), wait);
     return;
   }
-  fetchFeedBatch(lang, BATCH_SIZE).then(fresh => {
+  fetchBatchSingleFlight(lang).then(fresh => {
+    // Take ownership of this batch so a scroll can't also consume it.
+    if (_prefetchPromise && _prefetchLang === lang) {
+      _prefetchPromise = null;
+      _prefetchLang = null;
+    }
     const before = container.querySelectorAll('.card').length;
     appendUniqueArticles(container, fresh);
     const after = container.querySelectorAll('.card').length;
-    const addedAny = after > before;
-    if (addedAny) attachScrollSentinel();
+    if (after > before) attachScrollSentinel();
     startPrefetch(lang);
   }).catch(() => {
     startPrefetch(lang);
@@ -621,7 +628,9 @@ function renderCachedThenRefresh(container, cached, lang) {
   attachScrollSentinel();
   attachPrefetchSentinel();
 
-  silentBackgroundRefresh(container, lang);
+  // Cached cards are already painted - just fill the single-flight prefetch
+  // slot so the next scroll is instant (no duplicate batch fetch on load).
+  startPrefetch(lang);
   showWelcomeBack();
 
   // Featured card (silent, no blocking) - also gated on backoff

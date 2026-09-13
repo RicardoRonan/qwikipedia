@@ -151,13 +151,8 @@ export async function warmArticleCache(userId, lang) {
   if (!client || !userId) return;
 
   try {
-    const { fetchRandomTitles, fetchSummaryBatch } = await import('./wiki.js');
-    const titles = await fetchRandomTitles(MAX_PREFETCH_PER_RUN, lang);
-    if (!titles.length) return;
-
-    const articles = await fetchSummaryBatch(titles, lang, {
-      includeCategories: true,
-    });
+    const { fetchRandomArticles } = await import('./wiki.js');
+    const articles = await fetchRandomArticles(MAX_PREFETCH_PER_RUN, lang);
     if (articles.length) {
       await storeArticleCache(userId, lang, articles);
     }

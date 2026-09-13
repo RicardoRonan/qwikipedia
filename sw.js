@@ -133,6 +133,14 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Random endpoints are non-deterministic - never cache them.
+  if (url.href.includes('generator=random') || url.href.includes('list=random')) {
+    event.respondWith(fetch(r).catch(() => new Response('{"error":"offline"}', {
+      status: 503, headers: { 'Content-Type': 'application/json' },
+    })));
+    return;
+  }
+
   // Action API (random, search, categories, extracts): network-first
   // Search results need freshness; random benefits from network; cache for offline
   if (WIKI_ACTION_RE.test(url.href)) {
