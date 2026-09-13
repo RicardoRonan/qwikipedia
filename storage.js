@@ -7,6 +7,8 @@ const KEYS = {
   STATS:   'sw_stats',
 };
 
+const TIME_V2_KEY = 'sw_stats_time_v2';
+
 const DEFAULT_PREFS = {
   theme: 'system',
   textScale: 100,
@@ -182,6 +184,19 @@ export const Storage = {
   /** Replace stats in one write (e.g. cloud merge) */
   setStatsAll(stats) {
     _write(KEYS.STATS, { ...DEFAULT_STATS, ...stats });
+  },
+
+  /** True after the one-time reset of the old never-reset / idle-inclusive clock. */
+  hasActiveTimeModel() {
+    try { return localStorage.getItem(TIME_V2_KEY) === '1'; } catch { return false; }
+  },
+
+  /** Zero the inflated lifetime clock once. Current-session time is left to the caller. */
+  resetInflatedTotalTime() {
+    if (this.hasActiveTimeModel()) return;
+    const s = this.getStats();
+    this.setStatsAll({ ...s, totalTimeMs: 0 });
+    try { localStorage.setItem(TIME_V2_KEY, '1'); } catch {}
   },
 
   reset() {

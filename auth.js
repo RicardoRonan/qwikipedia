@@ -185,7 +185,10 @@ function mergeStats(cloud, local) {
     totalSeen:      Math.max(n(c.totalSeen),      n(l.totalSeen)),
     totalLiked:     Math.max(n(c.totalLiked),     n(l.totalLiked)),
     totalDismissed: Math.max(n(c.totalDismissed), n(l.totalDismissed)),
-    totalTimeMs:    Math.max(n(c.totalTimeMs),    n(l.totalTimeMs)),
+    // After the active-time reset, ignore a pre-reset cloud total (max would restore ~152h).
+    totalTimeMs:    Storage.hasActiveTimeModel()
+      ? n(l.totalTimeMs)
+      : Math.max(n(c.totalTimeMs), n(l.totalTimeMs)),
   };
 }
 

@@ -564,7 +564,9 @@ function bindLikesEvents() {
       const all = Storage.getHistory().likedTitles || [];
       if (!all.length) return;
       if (!confirm(`Remove all ${all.length} liked article${all.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+      const cleared = all.length;
       Storage.setHistory({ likedTitles: [], likedArticles: [] });
+      Storage.incrementStat('totalLiked', -cleared);
       const user = await getCurrentUser();
       if (user) scheduleSyncPrefs(user.id, 0);
       _likesSummaryCache.clear();
@@ -587,6 +589,7 @@ function bindLikesEvents() {
       const card = btn.closest('.like-card');
 
       Storage.removeLiked(title);
+      Storage.incrementStat('totalLiked', -1);
 
       const user = await getCurrentUser();
       if (user) scheduleSyncPrefs(user.id);

@@ -46,6 +46,12 @@ let _activeSince = (typeof document !== 'undefined' && document.visibilityState 
 function _elapsedNow() { return _sessionMs + (_activeSince ? Date.now() - _activeSince : 0); }
 function getSessionTimeMs() { return _elapsedNow(); }
 function getUnflushedSessionMs() { return _elapsedNow() - _flushedMs; }
+function getDisplayTotalTimeMs() {
+  return Math.max(0, (Storage.getStats().totalTimeMs || 0) + getUnflushedSessionMs());
+}
+function getLikedTotal() {
+  return (Storage.getHistory().likedTitles || []).length;
+}
 
 function _pauseClock() { if (_activeSince) { _sessionMs += Date.now() - _activeSince; _activeSince = null; } }
 function _resumeClock() { if (!_activeSince && document.visibilityState === 'visible') _activeSince = Date.now(); }
@@ -126,6 +132,7 @@ function showPage(id) {
 async function goToPage(id) {
   showPage(id);
   if (id === 'stats-page') renderStatsPage();
+  if (id === 'feed-page') showWelcomeBack();
   if (id === 'search-page') {
     const { renderSearchPage, resetSearchSuggestions } = await import('./search.js');
     resetSearchSuggestions?.();
@@ -142,9 +149,8 @@ function showWelcomeBack() {
   const el = document.getElementById('welcome-back');
   if (!el) return;
 
-  const stats = Storage.getStats();
-  const totalTimeMs = stats.totalTimeMs || 0;
-  const totalLiked = stats.totalLiked || 0;
+  const totalTimeMs = getDisplayTotalTimeMs();
+  const totalLiked = getLikedTotal();
 
   if (totalTimeMs <= 0 && totalLiked <= 0) {
     el.hidden = true;
@@ -1662,12 +1668,13 @@ function renderStatsPage() {
   const engine = Storage.getEngine();
 
   const sessionTimeSec = Math.floor(getSessionTimeMs() / 1000);
-  const totalTimeSec = Math.floor((totals.totalTimeMs + getUnflushedSessionMs()) / 1000);
+  const totalTimeSec = Math.floor(getDisplayTotalTimeMs() / 1000);
+  const likedTotal = getLikedTotal();
 
   // Stat cards
   const stats = [
     { label: 'Articles viewed',    session: _sessionSeen,      total: totals.totalSeen,      icon: ICONS.arrowRight },
-    { label: 'Liked',              session: _sessionLiked,     total: totals.totalLiked,     icon: ICONS.heart },
+    { label: 'Liked',              session: _sessionLiked,     total: likedTotal,            icon: ICONS.heart },
     { label: 'Not interested',     session: _sessionDismissed, total: totals.totalDismissed, icon: ICONS.x },
     { label: 'Time spent (session)', session: null,            total: null,                  timeSession: sessionTimeSec, timeTotal: totalTimeSec, icon: ICONS.refreshCw },
   ];
@@ -1940,6 +1947,9 @@ function initScrollHideNav() {
 // ===== Init =====
 
 async function init() {
+  Storage.resetInflatedTotalTime();
+  _flushedMs = 0;
+
   // Apply stored prefs immediately (before anything renders)
   const prefs = Storage.getPrefs();
   applyTheme(prefs.theme);
