@@ -2183,7 +2183,9 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 
 .deepdive-panel.is-open {
   opacity: 1;
-  max-height: min(80vh, 1400px);
+  max-height: min(200vh, 4000px);
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 12px 14px 14px;
   border-top-color: var(--border);
 }
@@ -2320,6 +2322,10 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 }
 
 .deepdive-tabpanel[hidden] {
+  display: none;
+}
+
+.deepdive-group[hidden] {
   display: none;
 }
 

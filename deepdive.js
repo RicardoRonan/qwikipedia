@@ -1,7 +1,13 @@
 import { cleanWikipediaText, escapeHtml } from './text-utils.js';
 import { ICONS } from './icons.js';
-import { classifyEntity, getContextualLinks, typeFromWikidata } from './entity.js';
+import { classifyEntity, getContextualLinks, typeFromWikidata, resolveType } from './entity.js';
 import { fetchWikidataEntities, fetchCommonsImages } from './wiki.js';
+
+const GROUP_ICONS = {
+  Streaming: ICONS.film, Details: ICONS.search, Listen: ICONS.music, Read: ICONS.book,
+  Official: ICONS.globe, Maps: ICONS.map, Travel: ICONS.map, Research: ICONS.bookOpen,
+  Profiles: ICONS.users, Play: ICONS.play, Nature: ICONS.leaf, Generic: ICONS.search,
+};
 
 const enc = (s) => encodeURIComponent(s);
 
@@ -185,46 +191,44 @@ function hydrateArticleFromCard(cardEl, article) {
   return base;
 }
 
-function fillContextualLinks(listEl, article, type, wd) {
-  listEl.replaceChildren();
+function renderContextualGroups(host, article, type, wd) {
+  host.replaceChildren();
   const links = getContextualLinks(article, type, wd);
+  if (!links.length) { host.hidden = true; return 0; }
+  host.hidden = false;
+
+  const groups = new Map();
   for (const link of links) {
-    const a = document.createElement('a');
-    a.href = link.href;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.className = 'deepdive-link';
-    a.title = link.desc ? `${link.label} - ${link.desc}` : link.label;
-    a.innerHTML = `<span class="deepdive-link-name">${escapeHtml(link.label)}</span>${
-      link.desc ? `<span class="deepdive-link-desc">${escapeHtml(link.desc)}</span>` : ''
-    }`;
-    listEl.appendChild(a);
+    if (!groups.has(link.group)) groups.set(link.group, []);
+    groups.get(link.group).push(link);
   }
+
+  const grid = document.createElement('div');
+  grid.className = 'deepdive-grid';
+  for (const [name, items] of groups) {
+    if (!items.length) continue;
+    const col = document.createElement('div');
+    col.className = 'deepdive-group deepdive-context';
+    const header = document.createElement('div');
+    header.className = 'deepdive-group-header';
+    header.innerHTML = `${GROUP_ICONS[name] || ICONS.compass || ''} <span>${escapeHtml(name)}</span>`;
+    const list = document.createElement('div');
+    list.className = 'deepdive-links';
+    for (const link of items) {
+      const a = document.createElement('a');
+      a.href = link.href; a.target = '_blank'; a.rel = 'noopener';
+      a.className = 'deepdive-link';
+      a.title = link.desc ? `${link.label} - ${link.desc}` : link.label;
+      a.innerHTML = `<span class="deepdive-link-name">${escapeHtml(link.label)}</span>${
+        link.desc ? `<span class="deepdive-link-desc">${escapeHtml(link.desc)}</span>` : ''
+      }`;
+      list.appendChild(a);
+    }
+    col.append(header, list);
+    grid.appendChild(col);
+  }
+  host.appendChild(grid);
   return links.length;
-}
-
-function renderContextualGroup(article, type, wd) {
-  const col = document.createElement('div');
-  col.className = 'deepdive-group deepdive-context';
-
-  const groupHeader = document.createElement('div');
-  groupHeader.className = 'deepdive-group-header';
-  groupHeader.innerHTML = `${ICONS.compass || ''} <span>For this article</span>`;
-
-  const list = document.createElement('div');
-  list.className = 'deepdive-links';
-  const n = fillContextualLinks(list, article, type, wd);
-  col.append(groupHeader, list);
-  if (!n) col.hidden = true;
-  return col;
-}
-
-function updateContextualGroup(el, article, type, wd) {
-  if (!el) return;
-  const list = el.querySelector('.deepdive-links');
-  if (!list) return;
-  const n = fillContextualLinks(list, article, type, wd);
-  el.hidden = n === 0;
 }
 
 function googleImagesUrl(topic) {
@@ -282,6 +286,11 @@ function renderImageGrid(imagesPanel, imgs, searchTopic) {
 
 function appendResourceGroups(grid, searchTopic) {
   for (const group of RESOURCES) {
+    const items = group.links
+      .map(l => ({ name: l.name, desc: l.desc, href: buildSearchUrl(searchTopic, l.url) }))
+      .filter(l => l.href);
+    if (!items.length) continue;
+
     const col = document.createElement('div');
     col.className = 'deepdive-group';
 
@@ -292,12 +301,9 @@ function appendResourceGroups(grid, searchTopic) {
 
     const list = document.createElement('div');
     list.className = 'deepdive-links';
-    for (const link of group.links) {
-      const href = buildSearchUrl(searchTopic, link.url);
-      if (!href) continue;
-
+    for (const link of items) {
       const a = document.createElement('a');
-      a.href = href;
+      a.href = link.href;
       a.target = '_blank';
       a.rel = 'noopener';
       a.className = 'deepdive-link';
@@ -382,8 +388,10 @@ export function toggleDeepDive(button, cardEl, article = '') {
   imagesPanel.hidden = true;
 
   let type = classifyEntity(articleObj);
-  const ctxEl = renderContextualGroup(articleObj, type, null);
-  linksPanel.appendChild(ctxEl);
+  const contextualHost = document.createElement('div');
+  contextualHost.className = 'deepdive-context-host';
+  renderContextualGroups(contextualHost, articleObj, type, null);
+  linksPanel.appendChild(contextualHost);
 
   const grid = document.createElement('div');
   grid.className = 'deepdive-grid';
@@ -424,7 +432,7 @@ export function toggleDeepDive(button, cardEl, article = '') {
   if (articleObj.qid) {
     fetchWikidataEntities([articleObj.qid]).then(map => {
       const wd = map.get(articleObj.qid) || null;
-      updateContextualGroup(ctxEl, articleObj, typeFromWikidata(wd?.instanceOf) || type, wd);
+      renderContextualGroups(contextualHost, articleObj, resolveType(type, wd), wd);
     }).catch(() => {});
   }
 

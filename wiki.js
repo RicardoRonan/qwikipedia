@@ -542,6 +542,21 @@ function normalizeWikidataEntity(ent) {
     imdb: str('P345')[0] || null,
     x: x ? `https://x.com/${x}` : null,
     instagram: ig ? `https://instagram.com/${ig}` : null,
+    occupations: ids('P106'),
+    tmdbMovie: str('P4947')[0] || null,
+    tmdbTv: str('P4983')[0] || null,
+    rottenTomatoes: str('P1258')[0] || null,
+    metacritic: str('P1712')[0] || null,
+    netflixId: str('P1874')[0] || null,
+    musicbrainzArtist: str('P434')[0] || null,
+    musicbrainzReleaseGroup: str('P436')[0] || null,
+    lastfm: str('P3192')[0] || null,
+    openLibrary: str('P648')[0] || null,
+    steamAppId: str('P1733')[0] || null,
+    igdbId: str('P5794')[0] || null,
+    mobygamesId: str('P1933')[0] || null,
+    hltbId: str('P2816')[0] || null,
+    pcgamingwikiId: str('P6337')[0] || null,
   };
 }
 export async function fetchWikidataEntities(qids = []) {
