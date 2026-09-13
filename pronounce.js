@@ -187,7 +187,8 @@ export function bindPronounceButtons(root = document) {
     btn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
       const extract = btn.classList.contains('card-extract-listen')
-        ? btn.closest('.card')?.querySelector('.card-extract')
+        ? (btn.closest('.card')?.querySelector('.card-extract')
+          || btn.closest('.like-card')?.querySelector('.like-card-extract'))
         : null;
       const text = (extract?.textContent || btn.dataset.pronounceText || '').trim();
       if (btn.classList.contains('is-speaking')) stopSpeaking();

@@ -2,7 +2,7 @@
 
 import { Storage } from './storage.js';
 import { fetchFeedBatch, getFeaturedCard, recordInteraction, applyDecay } from './engine.js';
-import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles, setCacheUserId } from './wiki.js';
+import { getApiBackoffRemainingMs, clearApiBackoff, getCachedArticles, setCacheUserId, fetchSummary } from './wiki.js';
 import { applyTheme, applyTextScale, initSettings, refreshInterests } from './settings.js';
 import { onAuthStateChange, pullPrefsFromCloud, scheduleSyncPrefs, syncPrefsToCloud } from './auth.js';
 import { showToast, showActionToast } from './toast.js';
@@ -326,26 +326,33 @@ function syncExtractExpanded(extractEl, expanded) {
 function setupExtractExpansion(cardEl, extractEl) {
   if (!cardEl || !extractEl) return;
   if ((extractEl.textContent || '').trim().length === 0) return;
-  extractEl.classList.add('expandable');
-  extractEl.setAttribute('role', 'button');
-  extractEl.setAttribute('tabindex', '0');
-  extractEl.setAttribute('aria-expanded', 'false');
 
-  const toggle = document.createElement('button');
-  toggle.type = 'button';
-  toggle.className = 'card-extract-toggle';
-  toggle.setAttribute('aria-expanded', 'false');
-  toggle.textContent = 'Show more';
-  extractEl.after(toggle);
-
-  const listen = document.createElement('button');
-  listen.type = 'button';
-  listen.className = 'card-extract-listen';
+  let listen = extractEl.parentElement?.querySelector(':scope > .card-extract-listen');
+  if (!listen) {
+    listen = document.createElement('button');
+    listen.type = 'button';
+    listen.className = 'card-extract-listen';
+    listen.setAttribute('aria-label', 'Listen to the description');
+    listen.setAttribute('aria-pressed', 'false');
+    listen.innerHTML = `${ICONS.volume2 || ''} Listen`;
+    extractEl.after(listen);
+  }
   listen.dataset.pronounceText = (extractEl.textContent || '').trim();
-  listen.setAttribute('aria-label', 'Listen to the description');
-  listen.setAttribute('aria-pressed', 'false');
-  listen.innerHTML = `${ICONS.volume2 || ''} Listen`;
-  toggle.after(listen);
+
+  let toggle = extractEl.parentElement?.querySelector(':scope > .card-extract-toggle');
+  if (!toggle) {
+    toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'card-extract-toggle';
+    toggle.textContent = 'Show more';
+    toggle.setAttribute('aria-expanded', 'false');
+    listen.after(toggle);
+  }
+
+  requestAnimationFrame(() => {
+    const overflowing = extractEl.scrollHeight > extractEl.clientHeight + 2;
+    toggle.hidden = !overflowing && !extractEl.classList.contains('expanded');
+  });
 }
 
 const _extractFetchCache = new Map();
@@ -357,7 +364,7 @@ function syncListenText(cardEl, extractEl) {
 
 async function toggleExtractExpansion(extractEl) {
   if (!extractEl) return;
-  const cardEl = extractEl.closest('.card');
+  const cardEl = extractEl.closest('.card, .like-card');
   if (!cardEl) return;
   const wasReading = extractEl.classList.contains('is-speech-reading');
   stopSpeaking();
@@ -398,35 +405,22 @@ async function toggleExtractExpansion(extractEl) {
   } catch {}
 }
 
-function initExtractClickDelegation() {
-  const feed = document.getElementById('feed-cards');
-  if (!feed || feed.dataset.extractDelegationBound === '1') return;
-  feed.dataset.extractDelegationBound = '1';
-  feed.addEventListener('click', (e) => {
+function bindExtractToggleRoot(root) {
+  if (!root || root.dataset.extractDelegationBound === '1') return;
+  root.dataset.extractDelegationBound = '1';
+  root.addEventListener('click', (e) => {
     const toggleEl = e.target.closest?.('.card-extract-toggle');
-    if (toggleEl && feed.contains(toggleEl)) {
-      e.preventDefault();
-      const extractEl = toggleEl.closest('.card')?.querySelector('.card-extract');
-      toggleExtractExpansion(extractEl);
-      return;
-    }
-    const extractEl = e.target.closest?.('.card-extract');
-    if (!extractEl || !feed.contains(extractEl)) return;
-    // ignore link clicks inside the extract
-    if (e.target.closest('a, button')) return;
-    // ignore real text selections
-    const sel = window.getSelection?.();
-    if (sel && sel.toString().length > 0) return;
+    if (!toggleEl || !root.contains(toggleEl)) return;
     e.preventDefault();
+    const card = toggleEl.closest('.card, .like-card');
+    const extractEl = card?.querySelector('.card-extract, .like-card-extract');
     toggleExtractExpansion(extractEl);
   });
-  feed.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const extractEl = e.target.closest?.('.card-extract.expandable');
-    if (!extractEl) return;
-    e.preventDefault();
-    toggleExtractExpansion(extractEl);
-  });
+}
+
+function initExtractClickDelegation() {
+  bindExtractToggleRoot(document.getElementById('feed-cards'));
+  bindExtractToggleRoot(document.getElementById('saved-content'));
 }
 
 function animateLike(cardEl, likeBtn, article) {
@@ -461,8 +455,7 @@ function animateLike(cardEl, likeBtn, article) {
     showToast('Added to likes', 'success');
   }
   if (currentUser) scheduleSyncPrefs(currentUser.id);
-  // Refresh the likes section on the settings page (no-op if not yet rendered)
-  import('./settings.js').then(m => m.renderLikesSection?.()).catch(() => {});
+  if (document.getElementById('saved-page')?.classList.contains('active')) renderSavedPage();
 
   if (g) {
     g.fromTo(likeBtn, { scale: 1 }, { scale: 1.35, duration: 0.14, yoyo: true, repeat: 1, ease: 'back.out(3)' });
@@ -556,6 +549,7 @@ function animateSave(cardEl, saveBtn, article) {
     showToast('Saved for later', 'success');
   }
   if (currentUser) scheduleSyncPrefs(currentUser.id);
+  if (document.getElementById('saved-page')?.classList.contains('active')) renderSavedPage();
 }
 
 // ===== Feed loading =====
@@ -2082,58 +2076,171 @@ function renderStatsPage() {
   }
 }
 
-// ===== Saved page =====
+// ===== Liked + saved library =====
 
-function renderSavedPage() {
+const _librarySummaryCache = new Map();
+const _libraryPending = new Map();
+const LIBRARY_PAGE_SIZE = 40;
+let _libraryShown = LIBRARY_PAGE_SIZE;
+
+function libraryTitles() {
+  const h = Storage.getHistory();
+  const seen = new Set();
+  const out = [];
+  for (const t of [...(h.likedTitles || []), ...(h.savedTitles || [])]) {
+    if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+  }
+  return out;
+}
+
+function libraryArticle(title) {
+  const h = Storage.getHistory();
+  const liked = (h.likedArticles || []).find(a => a?.title === title);
+  const saved = (h.savedArticles || []).find(a => a?.title === title);
+  if (liked && saved) {
+    return {
+      ...saved,
+      ...liked,
+      extract: liked.extract || saved.extract || '',
+      image: liked.image || saved.image || null,
+      url: liked.url || saved.url || null,
+    };
+  }
+  return liked || saved || _librarySummaryCache.get(title) || null;
+}
+
+function persistLibraryArticle(title, article, lang) {
+  const payload = {
+    title,
+    displayTitle: cleanWikipediaText(article.displayTitle || article.title || title),
+    extract: cleanWikipediaText(article.extract || ''),
+    image: article.image || null,
+    url: article.url || null,
+    lang: article.lang || lang,
+    categories: article.categories || [],
+    coordinates: article.coordinates || null,
+    qid: article.qid || null,
+  };
+  if (Storage.isLiked(title)) Storage.setLikedArticle(payload);
+  if (Storage.isSaved(title)) Storage.setSavedArticle(payload);
+}
+
+export function renderSavedPage() {
   const container = document.getElementById('saved-content');
   if (!container) return;
-  const { savedTitles, savedArticles } = Storage.getHistory();
-  if (!savedTitles.length) {
+  const titles = libraryTitles();
+  if (!titles.length) {
+    _libraryShown = LIBRARY_PAGE_SIZE;
     container.innerHTML = stateBox({
       icon: ICONS.bookmark,
-      title: 'No saved articles yet',
-      body: 'Tap the bookmark icon on any card to save it here.',
+      title: 'No liked or saved articles yet',
+      body: 'Tap the heart or bookmark on any card.',
     });
     return;
   }
   const lang = Storage.getPrefs().wikiLang || 'en';
+  const visible = titles.slice(0, _libraryShown);
+  const likedN = (Storage.getHistory().likedTitles || []).length;
   container.innerHTML = `
     <div class="likes-toolbar">
-      <span class="saved-count">${savedTitles.length} saved</span>
+      <span class="saved-count">${titles.length} article${titles.length === 1 ? '' : 's'}</span>
       <button class="btn-secondary likes-clear-btn" id="saved-clear-btn" type="button">Clear all</button>
     </div>
     <div class="likes-feed" id="saved-feed">
-      ${savedTitles.slice(0, 50).map(title => {
-        const article = savedArticles.find(a => a?.title === title);
-        return renderSavedCardHtml(title, article, lang);
-      }).join('')}
+      ${visible.map(title => renderSavedCardHtml(title, libraryArticle(title), lang)).join('')}
     </div>
   `;
-  bindYoutubeLinks(document.getElementById('saved-feed'));
+  const feed = document.getElementById('saved-feed');
+  if (titles.length > _libraryShown) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'likes-load-more';
+    more.textContent = `Show ${Math.min(LIBRARY_PAGE_SIZE, titles.length - _libraryShown)} more`;
+    more.addEventListener('click', () => {
+      _libraryShown += LIBRARY_PAGE_SIZE;
+      renderSavedPage();
+    });
+    feed?.appendChild(more);
+  }
+  bindYoutubeLinks(feed);
+  bindLibraryExtracts(feed);
+  visible.forEach(title => {
+    const article = libraryArticle(title);
+    if ((article?.extract || '').trim() || _librarySummaryCache.has(title) || _libraryPending.has(title)) return;
+    const p = fetchSummary(title, lang)
+      .then(fetched => {
+        if (!fetched) return;
+        _librarySummaryCache.set(title, fetched);
+        persistLibraryArticle(title, fetched, lang);
+        const row = feed?.querySelector(`[data-title="${cssEscapeAttr(title)}"]`);
+        if (row) {
+          row.outerHTML = renderSavedCardHtml(title, libraryArticle(title), lang);
+          bindLibraryExtracts(feed);
+          bindYoutubeLinks(feed);
+        }
+      })
+      .catch(() => {
+        const ex = feed?.querySelector(`[data-title="${cssEscapeAttr(title)}"] .like-card-extract`);
+        if (ex && !(ex.textContent || '').trim()) ex.textContent = 'Could not load preview.';
+      })
+      .finally(() => { _libraryPending.delete(title); });
+    _libraryPending.set(title, p);
+  });
   document.getElementById('saved-clear-btn')?.addEventListener('click', async () => {
-    if (!confirm('Remove all saved articles?')) return;
-    Storage.setHistory({ savedTitles: [], savedArticles: [] });
-    showToast('Cleared all saved articles', 'info');
+    if (!confirm('Remove all liked and saved articles?')) return;
+    const likedCount = likedN;
+    Storage.setHistory({
+      savedTitles: [], savedArticles: [],
+      likedTitles: [], likedArticles: [],
+    });
+    if (likedCount) Storage.incrementStat('totalLiked', -likedCount);
+    _librarySummaryCache.clear();
+    _libraryPending.clear();
+    _libraryShown = LIBRARY_PAGE_SIZE;
+    showToast('Cleared liked and saved articles', 'info');
     if (currentUser) scheduleSyncPrefs(currentUser.id, 0);
     renderSavedPage();
   });
-  document.getElementById('saved-feed')?.addEventListener('click', (e) => {
+  feed?.addEventListener('click', (e) => {
     const diveBtn = e.target.closest('.btn-deepdive');
     if (diveBtn) {
       const card = diveBtn.closest('.like-card');
       const title = card?.dataset?.title || '';
-      const saved = (Storage.getHistory().savedArticles || []).find(a => a?.title === title);
-      toggleDeepDive(diveBtn, card, saved || diveBtn.dataset.deepdiveTopic || '');
+      toggleDeepDive(diveBtn, card, libraryArticle(title) || diveBtn.dataset.deepdiveTopic || '');
       return;
     }
-    const btn = e.target.closest('[data-unsave-title]');
-    if (!btn) return;
-    const title = btn.dataset.unsaveTitle;
-    Storage.removeSaved(title);
-    showToast('Removed from saved', 'info');
-    if (currentUser) scheduleSyncPrefs(currentUser.id);
-    renderSavedPage();
+    const unsave = e.target.closest('[data-unsave-title]');
+    if (unsave) {
+      const title = unsave.dataset.unsaveTitle;
+      Storage.removeSaved(title);
+      showToast('Removed from saved', 'info');
+      if (currentUser) scheduleSyncPrefs(currentUser.id);
+      renderSavedPage();
+      return;
+    }
+    const unlike = e.target.closest('[data-unlike-title]');
+    if (unlike) {
+      const title = unlike.dataset.unlikeTitle;
+      Storage.removeLiked(title);
+      Storage.incrementStat('totalLiked', -1);
+      if (_sessionLiked > 0) _sessionLiked--;
+      showToast(`Unliked "${title}"`, 'info');
+      if (currentUser) scheduleSyncPrefs(currentUser.id);
+      renderSavedPage();
+    }
   });
+}
+
+function bindLibraryExtracts(feed) {
+  feed?.querySelectorAll('.like-card').forEach(card => {
+    setupExtractExpansion(card, card.querySelector('.like-card-extract'));
+  });
+  bindPronounceButtons(feed);
+}
+
+function cssEscapeAttr(value) {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return String(value).replace(/["\\]/g, '\\$&');
 }
 
 function renderSavedCardHtml(title, article, lang) {
@@ -2141,7 +2248,9 @@ function renderSavedCardHtml(title, article, lang) {
   const url = article?.url || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`;
   const display = article?.displayTitle || article?.title || title;
   const image = article?.image;
-  const extract = article?.extract;
+  const extract = cleanWikipediaText(article?.extract || '');
+  const isLiked = Storage.isLiked(title);
+  const isSaved = Storage.isSaved(title);
   const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
   const thumb = image
     ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeAttr(image)}')" data-image-src="${escapeAttr(image)}" role="button" tabindex="0" aria-label="View image of ${escapeAttr(display)}"></div>`
@@ -2158,12 +2267,14 @@ function renderSavedCardHtml(title, article, lang) {
       ${thumb}
       <div class="like-card-body">
         <a class="like-card-title" href="${escapeAttr(url)}" target="_blank" rel="noopener">${escapeHtml(display)}</a>
-        <p class="like-card-extract">${extract ? escapeHtml(extract) : ''}</p>
+        <p class="like-card-extract${extract ? '' : ' likes-pending'}">${extract ? escapeHtml(extract) : 'Loading preview…'}</p>
+        ${extract ? `<button type="button" class="card-extract-listen" data-pronounce-text="${escapeAttr(extract)}" aria-label="Listen to the description" aria-pressed="false">${ICONS.volume2 || ''} Listen</button>` : ''}
         <div class="like-card-actions">
           <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${ICONS.externalLink || ''} Open</a>
           <a class="card-youtube-link" href="#" data-youtube-title="${escapeAttr(display)}" aria-label="Watch related videos on YouTube">${(ICONS && ICONS.youtube) || '▶'} Watch related videos</a>
           <button type="button" class="btn-deepdive" data-deepdive-topic="${escapeAttr(display)}" aria-label="Deep dive research">${(ICONS && ICONS.compass) || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>'}</button>
-          <button type="button" class="like-unlike-btn" data-unsave-title="${safeTitle}" aria-label="Unsave ${safeTitle}">${ICONS.bookmarkFilled || ''} Unsave</button>
+          ${isSaved ? `<button type="button" class="like-unlike-btn" data-unsave-title="${safeTitle}" aria-label="Unsave ${safeTitle}">${ICONS.bookmarkFilled || ''} Unsave</button>` : ''}
+          ${isLiked ? `<button type="button" class="like-unlike-btn" data-unlike-title="${safeTitle}" aria-label="Unlike ${safeTitle}">${ICONS.heartFilled || ''} Unlike</button>` : ''}
         </div>
       </div>
     </div>

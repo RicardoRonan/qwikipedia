@@ -165,7 +165,7 @@ function normalizeActionPage(page, lang = 'en') {
 
 const ACTION_PROPS =
   'prop=extracts%7Cpageimages%7Ccategories%7Ccoordinates%7Cpageprops' +
-  '&exintro=1&explaintext=1&exchars=520&exlimit=max' +
+  '&exintro=1&explaintext=1&exlimit=max' +
   '&piprop=thumbnail&pithumbsize=400&pilimit=max' +
   '&cllimit=20&clshow=!hidden' +
   '&coprop=type%7Cdim%7Cglobe%7Cname&coprimary=primary' +
@@ -390,7 +390,7 @@ export async function fetchCategoryMembers(category, limit = 20, lang = 'en') {
 export async function fetchArticleIntro(title, lang = 'en') {
   if (!title) return '';
   try {
-    const url = `${baseUrl(lang)}/w/api.php?action=query&prop=extracts&explaintext=1&exsectionformat=plain&exintro=1&exchars=1600&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+    const url = `${baseUrl(lang)}/w/api.php?action=query&prop=extracts&explaintext=1&exsectionformat=plain&exintro=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
     const data = await fetchWithTimeout(url);
     const pages = data?.query?.pages || {};
     const page = Object.values(pages)[0];

@@ -198,31 +198,9 @@
     <section id="account-page" class="page" aria-label="Account settings">
       <div class="settings-page-header">
         <h1>Account</h1>
-        <p>Profile, security, and your liked articles</p>
+        <p>Profile and security</p>
       </div>
       <div id="account-page-content"></div>
-
-      <!-- Your Likes (signed-in users) -->
-      <div class="settings-section" id="likes-section" hidden>
-        <div class="settings-section-header">
-          Your likes <span class="stats-count-badge" id="likes-count">0</span>
-        </div>
-        <div class="likes-toolbar">
-          <input
-            type="search"
-            class="input-field likes-search"
-            id="likes-search"
-            placeholder="Search your likes…"
-            aria-label="Search your liked articles"
-          />
-          <button class="btn-secondary likes-clear-btn" id="likes-clear-btn" type="button">
-            Clear all
-          </button>
-        </div>
-        <div id="likes-feed" class="likes-feed" aria-live="polite">
-          <!-- Rendered by settings.js -->
-        </div>
-      </div>
     </section>
 
     <!-- ===== Stats Page ===== -->
@@ -439,7 +417,9 @@
       <div class="settings-section" id="install-app-section" hidden>
         <div class="settings-section-header">App</div>
         <p class="settings-info-text" id="install-app-status">Install Qwikipedia on this device.</p>
-        <button class="btn-secondary" id="install-app-btn" type="button"><span class="btn-label">Install app</span></button>
+        <div class="btn-row">
+          <button class="btn-secondary" id="install-app-btn" type="button"><span class="btn-label">Install app</span></button>
+        </div>
       </div>
 
     </section>
@@ -470,15 +450,15 @@
     </section>
 
     <!-- ===== Saved Page ===== -->
-    <section id="saved-page" class="page" aria-label="Saved articles">
+    <section id="saved-page" class="page" aria-label="Liked and saved articles">
       <div class="settings-page-header">
-        <h1>Saved for later</h1>
-        <p>Articles you've bookmarked to read later</p>
+        <h1>Liked and saved</h1>
+        <p>Read and listen to articles you've liked or saved</p>
       </div>
       <div id="saved-content" aria-live="polite">
         <div class="state-box">
-          <h3>No saved articles yet</h3>
-          <p>Tap the bookmark icon on any card to save it here.</p>
+          <h3>No liked or saved articles yet</h3>
+          <p>Tap the heart or bookmark on any card.</p>
         </div>
       </div>
     </section>
