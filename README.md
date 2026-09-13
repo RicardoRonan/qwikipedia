@@ -4,6 +4,7 @@ A personalized Wikipedia feed that learns what you like - built with vanilla HTM
 
 ## Features
 
+- **In-app image viewer** with swipe, arrows, and a link out to the original file
 - **Pronunciation (browser speech)** on feed cards
 - **Infinite scroll feed** of Wikipedia articles with images, title, and extract
 - **Like / Not interested / Skip** interactions that train a local recommendation engine

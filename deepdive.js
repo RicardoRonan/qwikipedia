@@ -266,6 +266,8 @@ function renderImageGrid(imagesPanel, imgs, searchTopic) {
       a.target = '_blank';
       a.rel = 'noopener';
       a.title = image.title;
+      if (image.full) a.dataset.full = image.full;
+      if (image.page) a.dataset.page = image.page;
       const img = document.createElement('img');
       img.src = image.thumb;
       img.alt = image.title;

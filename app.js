@@ -92,8 +92,13 @@ function showPage(id) {
   const page = document.getElementById(id);
   if (page) page.classList.add('active');
 
+  const settingsCoversAccount = id === 'account-page'
+    && typeof window !== 'undefined'
+    && window.matchMedia('(max-width: 768px)').matches;
+
   document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
-    const active = btn.dataset.page === id;
+    const active = btn.dataset.page === id
+      || (settingsCoversAccount && btn.dataset.page === 'settings-page');
     btn.classList.toggle('active', active);
     if (active) btn.setAttribute('aria-current', 'page');
     else btn.removeAttribute('aria-current');
@@ -1277,19 +1282,54 @@ function initLightbox() {
   const lb        = document.getElementById('lightbox');
   const lbImg     = document.getElementById('lightbox-img');
   const lbCaption = document.getElementById('lightbox-caption');
+  const lbCount   = document.getElementById('lightbox-count');
+  const lbSource  = document.getElementById('lightbox-source');
   const lbClose   = document.getElementById('lightbox-close');
+  const lbPrev    = document.getElementById('lightbox-prev');
+  const lbNext    = document.getElementById('lightbox-next');
   const lbDl      = document.getElementById('lightbox-download');
   if (!lb) return;
 
+  let gallery = [];
+  let galleryIndex = 0;
   let currentSrc = '';
   let _lightboxTrigger = null;
+  let _didSwipe = false;
 
-  function openLightbox(src, alt) {
-    currentSrc = src;
+  if (lbPrev) lbPrev.innerHTML = ICONS.chevronLeft || '';
+  if (lbNext) lbNext.innerHTML = ICONS.chevronRight || '';
+  if (lbSource) lbSource.innerHTML = `${ICONS.externalLink || ''} Open image`;
+
+  function currentItem() { return gallery[galleryIndex] || null; }
+
+  function showItem(i) {
+    if (!gallery.length) return;
+    galleryIndex = ((i % gallery.length) + gallery.length) % gallery.length;
+    const item = gallery[galleryIndex];
+    currentSrc = item.src;
+    lbImg.src = item.src;
+    lbImg.alt = item.alt || '';
+    if (lbCaption) lbCaption.textContent = item.alt || '';
+    if (lbSource) {
+      lbSource.href = item.page || item.src;
+      lbSource.hidden = false;
+    }
+    if (lbCount) {
+      const many = gallery.length > 1;
+      lbCount.hidden = !many;
+      lbCount.textContent = many ? `${galleryIndex + 1} / ${gallery.length}` : '';
+    }
+    const many = gallery.length > 1;
+    if (lbPrev) lbPrev.hidden = !many;
+    if (lbNext) lbNext.hidden = !many;
+  }
+
+  function openLightbox(items, startIndex = 0) {
+    const list = (items || []).filter(it => it?.src);
+    if (!list.length) return;
+    gallery = list;
     _lightboxTrigger = document.activeElement;
-    lbImg.src = src;
-    lbImg.alt = alt;
-    if (lbCaption) lbCaption.textContent = alt;
+    showItem(startIndex);
     lb.classList.add('open');
     lbClose?.focus();
 
@@ -1307,6 +1347,11 @@ function initLightbox() {
       lb.classList.remove('open');
       lbImg.src = '';
       currentSrc = '';
+      gallery = [];
+      galleryIndex = 0;
+      lb.style.background = '';
+      lbImg.style.transform = '';
+      lbImg.style.opacity = '';
       document.body.style.overflow = '';
       const trigger = _lightboxTrigger;
       _lightboxTrigger = null;
@@ -1319,30 +1364,63 @@ function initLightbox() {
     }
   }
 
+  function go(delta) {
+    if (gallery.length < 2) return;
+    showItem(galleryIndex + delta);
+    const g = gsap();
+    if (g) {
+      g.fromTo(lbImg, { opacity: 0.35, x: delta > 0 ? 28 : -28 }, { opacity: 1, x: 0, duration: 0.18, ease: 'power2.out' });
+    }
+  }
+
+  function openCurrentSource() {
+    const item = currentItem();
+    const href = item?.page || item?.src;
+    if (href) window.open(href, '_blank', 'noopener');
+  }
+
   lbClose?.addEventListener('click', closeLightbox);
-  // Close when clicking the dimmed area (not the image, toolbar, or close button)
+  lbPrev?.addEventListener('click', (e) => { e.stopPropagation(); go(-1); });
+  lbNext?.addEventListener('click', (e) => { e.stopPropagation(); go(1); });
   lb.addEventListener('click', (e) => {
     if (
       e.target.closest('#lightbox-img')
       || e.target.closest('#lightbox-close')
       || e.target.closest('#lightbox-toolbar')
+      || e.target.closest('#lightbox-prev')
+      || e.target.closest('#lightbox-next')
     ) {
       return;
     }
     closeLightbox();
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && lb.classList.contains('open')) closeLightbox(); });
+  lbImg.addEventListener('click', () => {
+    if (_didSwipe) return;
+    openCurrentSource();
+  });
+  document.addEventListener('keydown', e => {
+    if (!lb.classList.contains('open')) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') go(-1);
+    if (e.key === 'ArrowRight') go(1);
+  });
 
-  // ── Drag-to-close on mobile ──────────────────────────────────────────────
+  let dragStartX = 0;
   let dragStartY = 0;
+  let dragCurrentX = 0;
   let dragCurrentY = 0;
   let isDragging = false;
-  const DISMISS_THRESHOLD = 120; // px down to auto-dismiss
-  const VELOCITY_THRESHOLD = 0.6; // px/ms - fast flick also dismisses
+  let dragMode = null;
+  const DISMISS_THRESHOLD = 120;
+  const VELOCITY_THRESHOLD = 0.6;
+  const SWIPE_THRESHOLD = 56;
 
   function resetDragState() {
     isDragging = false;
+    dragMode = null;
+    dragStartX = 0;
     dragStartY = 0;
+    dragCurrentX = 0;
     dragCurrentY = 0;
     lbImg.style.transition = 'transform 0.25s ease, opacity 0.25s ease';
     lbImg.style.transform = '';
@@ -1350,57 +1428,84 @@ function initLightbox() {
     setTimeout(() => { lbImg.style.transition = ''; }, 260);
   }
 
+  function touchOnChrome(e) {
+    return e.target.closest('#lightbox-close, #lightbox-toolbar, #lightbox-prev, #lightbox-next');
+  }
+
   lb.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1) return;
+    if (e.touches.length !== 1 || touchOnChrome(e)) return;
     isDragging = true;
+    _didSwipe = false;
+    dragMode = null;
+    dragStartX = e.touches[0].clientX;
     dragStartY = e.touches[0].clientY;
+    dragCurrentX = dragStartX;
     dragCurrentY = dragStartY;
+    lb._touchStartTime = e.timeStamp;
     lbImg.style.transition = 'none';
   }, { passive: true });
 
   lb.addEventListener('touchmove', e => {
     if (!isDragging || e.touches.length !== 1) return;
+    dragCurrentX = e.touches[0].clientX;
     dragCurrentY = e.touches[0].clientY;
-    const dy = Math.max(0, dragCurrentY - dragStartY); // only allow downward drag
-    const progress = Math.min(dy / DISMISS_THRESHOLD, 1);
-    lbImg.style.transform = `translateY(${dy}px) scale(${1 - progress * 0.08})`;
-    lbImg.style.opacity = `${1 - progress * 0.5}`;
-    lb.style.background = `rgba(0,0,0,${0.92 - progress * 0.5})`;
+    const dx = dragCurrentX - dragStartX;
+    const dy = dragCurrentY - dragStartY;
+    if (!dragMode && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      dragMode = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    }
+    if (dragMode === 'h' && gallery.length > 1) {
+      lbImg.style.transform = `translateX(${dx}px)`;
+      lbImg.style.opacity = `${1 - Math.min(Math.abs(dx) / 280, 0.35)}`;
+    } else if (dragMode === 'v') {
+      const down = Math.max(0, dy);
+      const progress = Math.min(down / DISMISS_THRESHOLD, 1);
+      lbImg.style.transform = `translateY(${down}px) scale(${1 - progress * 0.08})`;
+      lbImg.style.opacity = `${1 - progress * 0.5}`;
+      lb.style.background = `rgba(0,0,0,${0.92 - progress * 0.5})`;
+    }
   }, { passive: true });
 
   lb.addEventListener('touchend', e => {
     if (!isDragging) return;
+    const dx = dragCurrentX - dragStartX;
     const dy = dragCurrentY - dragStartY;
     const dt = e.timeStamp - (lb._touchStartTime || e.timeStamp);
-    const velocity = dt > 0 ? dy / dt : 0;
-    const shouldDismiss = dy > DISMISS_THRESHOLD || (dy > 40 && velocity > VELOCITY_THRESHOLD);
+    const vx = dt > 0 ? dx / dt : 0;
+    const vy = dt > 0 ? dy / dt : 0;
 
-    if (shouldDismiss) {
-      const g = gsap();
-      if (g) {
-        g.to(lbImg, { y: window.innerHeight, opacity: 0, duration: 0.22, ease: 'power2.in', onComplete: () => {
-          lb.classList.remove('open');
-          lb.style.background = '';
-          lbImg.src = '';
-          lbImg.style.transform = '';
-          lbImg.style.opacity = '';
-          currentSrc = '';
-          document.body.style.overflow = '';
-        }});
+    if (dragMode === 'h' && gallery.length > 1) {
+      const shouldSwipe = Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(vx) > VELOCITY_THRESHOLD;
+      if (shouldSwipe) {
+        _didSwipe = true;
+        go(dx < 0 ? 1 : -1);
+        lbImg.style.transform = '';
+        lbImg.style.opacity = '';
+        lbImg.style.transition = '';
       } else {
-        closeLightbox();
+        resetDragState();
+      }
+    } else if (dragMode === 'v') {
+      const shouldDismiss = dy > DISMISS_THRESHOLD || (dy > 40 && vy > VELOCITY_THRESHOLD);
+      if (shouldDismiss) {
+        const g = gsap();
+        if (g) {
+          g.to(lbImg, { y: window.innerHeight, opacity: 0, duration: 0.22, ease: 'power2.in', onComplete: closeLightbox });
+        } else {
+          closeLightbox();
+        }
+      } else {
+        resetDragState();
+        lb.style.background = '';
       }
     } else {
-      // Snap back
       resetDragState();
-      lb.style.background = '';
     }
     isDragging = false;
+    dragMode = null;
+    setTimeout(() => { _didSwipe = false; }, 200);
   });
 
-  lb.addEventListener('touchstart', e => { lb._touchStartTime = e.timeStamp; }, { passive: true });
-
-  // Download - fetch as blob to force save dialog (bypasses cross-origin restriction)
   lbDl?.addEventListener('click', async () => {
     if (!currentSrc) return;
     lbDl.classList.add('loading');
@@ -1423,10 +1528,82 @@ function initLightbox() {
     }
   });
 
-  // Delegate click on any .card-image-wrap img
-  document.getElementById('feed-cards')?.addEventListener('click', e => {
+  function itemsFromCardImages(root, clicked) {
+    const imgs = [...root.querySelectorAll('.card-image-wrap img')]
+      .filter(el => el.src && !el.parentElement?.classList.contains('is-hidden'));
+    const index = Math.max(0, imgs.indexOf(clicked));
+    return {
+      items: imgs.map(el => ({ src: el.src, alt: el.alt || '', page: el.src })),
+      index,
+    };
+  }
+
+  function itemsFromThumbs(root, clicked) {
+    const thumbs = [...root.querySelectorAll('.like-card-thumb[data-image-src]')];
+    const index = Math.max(0, thumbs.indexOf(clicked));
+    return {
+      items: thumbs.map(el => ({
+        src: el.dataset.imageSrc,
+        alt: el.getAttribute('aria-label') || '',
+        page: el.dataset.imageSrc,
+      })),
+      index,
+    };
+  }
+
+  function itemsFromDeepDive(grid, clicked) {
+    const links = [...grid.querySelectorAll('a.deepdive-image')];
+    const index = Math.max(0, links.indexOf(clicked));
+    return {
+      items: links.map(a => {
+        const img = a.querySelector('img');
+        return {
+          src: a.dataset.full || img?.src || '',
+          alt: img?.alt || a.title || '',
+          page: a.dataset.page || a.href,
+        };
+      }),
+      index,
+    };
+  }
+
+  document.addEventListener('click', e => {
+    const dive = e.target.closest('a.deepdive-image');
+    if (dive) {
+      const grid = dive.closest('.deepdive-images');
+      if (grid) {
+        e.preventDefault();
+        const { items, index } = itemsFromDeepDive(grid, dive);
+        openLightbox(items, index);
+        return;
+      }
+    }
+
     const img = e.target.closest('.card-image-wrap img');
-    if (img) openLightbox(img.src, img.alt);
+    if (img) {
+      const root = img.closest('#feed-cards, #search-results, .likes-feed') || img.closest('.card')?.parentElement || document;
+      const { items, index } = itemsFromCardImages(root, img);
+      openLightbox(items, index);
+      return;
+    }
+
+    const thumb = e.target.closest('.like-card-thumb[data-image-src]');
+    if (thumb) {
+      e.preventDefault();
+      const root = thumb.closest('#saved-feed, #likes-feed, .likes-feed') || document;
+      const { items, index } = itemsFromThumbs(root, thumb);
+      openLightbox(items, index);
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const thumb = e.target.closest?.('.like-card-thumb[data-image-src]');
+    if (!thumb) return;
+    e.preventDefault();
+    const root = thumb.closest('#saved-feed, #likes-feed, .likes-feed') || document;
+    const { items, index } = itemsFromThumbs(root, thumb);
+    openLightbox(items, index);
   });
 }
 
@@ -1852,7 +2029,7 @@ function renderSavedCardHtml(title, article, lang) {
   const extract = article?.extract;
   const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
   const thumb = image
-    ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeAttr(image)}')" aria-hidden="true"></div>`
+    ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeAttr(image)}')" data-image-src="${escapeAttr(image)}" role="button" tabindex="0" aria-label="View image of ${escapeAttr(display)}"></div>`
     : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
   const qidAttr = article?.qid ? ` data-qid="${escapeAttr(article.qid)}"` : '';
   const catsAttr = article?.categories?.length

@@ -61,4 +61,6 @@ export const ICONS = {
   lock: icon(`<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`, 16),
   video: icon(`<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>`, 16),
   volume2: icon(`<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>`, 16),
+  chevronLeft: icon(`<polyline points="15 18 9 12 15 6"/>`, 20),
+  chevronRight: icon(`<polyline points="9 18 15 12 9 6"/>`, 20),
 };

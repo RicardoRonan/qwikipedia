@@ -517,7 +517,7 @@ function renderLikeCardHtml(title, article, lang) {
 
   const initial = escapeHtml((display || title || '?').trim().charAt(0).toUpperCase());
   const thumb = image
-    ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeHtml(image)}')" aria-hidden="true"></div>`
+    ? `<div class="like-card-thumb" style="--thumb-image:url('${escapeHtml(image)}')" data-image-src="${escapeHtml(image)}" role="button" tabindex="0" aria-label="View image of ${escapeHtml(display)}"></div>`
     : `<div class="like-card-thumb no-image" aria-hidden="true">${initial}</div>`;
 
   const extractHtml = extract
