@@ -1,5 +1,5 @@
 /** App-shell cache - same-origin static assets load fast/offline after first visit */
-const SHELL_CACHE  = 'qwikipedia-shell-v10';
+const SHELL_CACHE  = 'qwikipedia-shell-v11';
 const API_CACHE    = 'qwikipedia-api-v1';
 const VENDOR_CACHE = 'qwikipedia-vendor-v1';
 const CORE = [

@@ -2,6 +2,7 @@
 
 import { Storage } from './storage.js';
 import { escapeHtml } from './text-utils.js';
+import { ICONS } from './icons.js';
 
 const supported = typeof window !== 'undefined'
   && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
@@ -16,7 +17,14 @@ let _activeBtn = null;
 let _current = null;
 let _highlightEl = null;
 let _highlightTimer = null;
+let _highlightWordIndex = 0;
+let _highlightRate = 1;
 let _boundaryWord = 0;
+let _paused = false;
+let _dock = null;
+let _fullText = '';
+let _spokenIndex = 0;
+let _highlightOffset = 0;
 
 function loadVoices() { if (supported) _voices = window.speechSynthesis.getVoices() || []; }
 if (supported) {
@@ -67,7 +75,16 @@ function highlightChar(el, charIndex) {
     else break;
   }
   words.forEach(w => w.classList.toggle('is-spoken', w === active));
-  active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function wordIndexForChar(el, charIndex) {
+  const words = el.querySelectorAll('.speech-word');
+  let i = 0;
+  for (let k = 0; k < words.length; k++) {
+    if (Number(words[k].dataset.start) <= charIndex) i = k;
+    else break;
+  }
+  return i;
 }
 
 function clearHighlight() {
@@ -90,52 +107,141 @@ function prepareHighlight(el) {
   }
 }
 
-function startFallbackHighlight(el, rate) {
+function startFallbackHighlight(el, rate, fromIndex = 0) {
   const words = [...el.querySelectorAll('.speech-word')];
   if (words.length < 2) return;
-  const wpm = 165 * (Number.isFinite(rate) ? rate : 1);
+  _highlightRate = Number.isFinite(rate) ? rate : 1;
+  const wpm = 165 * _highlightRate;
   const ms = Math.max(160, 60000 / wpm);
-  let i = 0;
-  highlightChar(el, Number(words[0].dataset.start));
+  _highlightWordIndex = Math.max(0, fromIndex);
+  const start0 = Number(words[_highlightWordIndex].dataset.start);
+  _spokenIndex = Math.max(0, start0 - _highlightOffset);
+  highlightChar(el, start0);
+  if (_highlightTimer) { clearInterval(_highlightTimer); _highlightTimer = null; }
   _highlightTimer = setInterval(() => {
-    if (el.dataset.gotBoundary === '1') {
+    if (_paused || el.dataset.gotBoundary === '1') {
       clearInterval(_highlightTimer);
       _highlightTimer = null;
       return;
     }
-    i += 1;
-    if (i >= words.length) {
+    _highlightWordIndex += 1;
+    if (_highlightWordIndex >= words.length) {
       clearInterval(_highlightTimer);
       _highlightTimer = null;
       return;
     }
-    highlightChar(el, Number(words[i].dataset.start));
+    const start = Number(words[_highlightWordIndex].dataset.start);
+    _spokenIndex = Math.max(0, start - _highlightOffset);
+    highlightChar(el, start);
   }, ms);
+}
+
+function ensureDock() {
+  if (_dock) return _dock;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'speech-dock';
+  btn.className = 'speech-dock';
+  btn.hidden = true;
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePause();
+  });
+  document.body.appendChild(btn);
+  _dock = btn;
+  return btn;
+}
+
+function syncDock() {
+  const dock = ensureDock();
+  const active = !!_current;
+  dock.hidden = !active;
+  if (!active) return;
+  dock.innerHTML = _paused ? (ICONS.play || '') : (ICONS.pause || '');
+  dock.setAttribute('aria-label', _paused ? 'Resume reading' : 'Pause reading');
+}
+
+function togglePause() {
+  if (!_current) return;
+  if (_paused) resumeSpeaking();
+  else pauseSpeaking();
+}
+
+function pauseSpeaking() {
+  if (!supported || !_current || _paused) return;
+  _paused = true;
+  if (_highlightTimer) { clearInterval(_highlightTimer); _highlightTimer = null; }
+  if (window.speechSynthesis.speaking) window.speechSynthesis.pause();
+  syncDock();
+  setTimeout(() => {
+    if (!_paused || !_current) return;
+    if (!window.speechSynthesis.paused) window.speechSynthesis.cancel();
+  }, 80);
+}
+
+function resumeSpeaking() {
+  if (!supported || !_paused) return;
+  const button = _activeBtn;
+  const highlightEl = _highlightEl;
+  const sliced = (_fullText || '').slice(_spokenIndex);
+  const lead = (sliced.match(/^\s*/) || [''])[0].length;
+  const rest = sliced.trim();
+  const offset = _highlightOffset + _spokenIndex + lead;
+  _paused = false;
+  if (window.speechSynthesis.paused && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) {
+    window.speechSynthesis.resume();
+    if (highlightEl && highlightEl.dataset.gotBoundary !== '1') {
+      startFallbackHighlight(highlightEl, _highlightRate, _highlightWordIndex);
+    }
+    syncDock();
+    return;
+  }
+  if (!rest) { stopSpeaking(); return; }
+  speak(rest, { button, highlightEl, charOffset: offset });
 }
 
 export function stopSpeaking() {
   if (!supported) return;
+  _paused = false;
+  _fullText = '';
+  _spokenIndex = 0;
+  _highlightOffset = 0;
   window.speechSynthesis.cancel();
   _current = null;
   if (_activeBtn) { _activeBtn.classList.remove('is-speaking'); _activeBtn.setAttribute('aria-pressed', 'false'); }
   _activeBtn = null;
   clearHighlight();
+  syncDock();
 }
 
 export function isSpeaking() { return supported && window.speechSynthesis.speaking; }
 
-export function speak(text, { button = null, highlightEl = null } = {}) {
+export function speak(text, { button = null, highlightEl = null, charOffset = 0 } = {}) {
   if (!supported || !text) return;
   const prefs = Storage.getPrefs();
   if (prefs.pronounceEnabled === false) return;
-  stopSpeaking();
+  if (charOffset > 0) {
+    _paused = false;
+    window.speechSynthesis.cancel();
+    _current = null;
+  } else {
+    stopSpeaking();
+  }
+
+  _fullText = text;
+  _spokenIndex = 0;
+  _highlightOffset = charOffset;
 
   if (highlightEl) {
     _highlightEl = highlightEl;
     _boundaryWord = 0;
     delete highlightEl.dataset.gotBoundary;
-    prepareHighlight(highlightEl);
-    text = (highlightEl.textContent || '').trim() || text;
+    if (charOffset === 0) {
+      prepareHighlight(highlightEl);
+      text = (highlightEl.textContent || '').trim() || text;
+      _fullText = text;
+    }
   }
 
   const bcp47 = langFor(prefs.wikiLang || 'en');
@@ -147,34 +253,48 @@ export function speak(text, { button = null, highlightEl = null } = {}) {
   if (voice) u.voice = voice;
 
   u.onboundary = (e) => {
-    if (_current !== u || !_highlightEl) return;
+    if (_current !== u || !_highlightEl || _paused) return;
     if (e.name && e.name !== 'word') return;
     _highlightEl.dataset.gotBoundary = '1';
     if (_highlightTimer) { clearInterval(_highlightTimer); _highlightTimer = null; }
-    let idx = e.charIndex || 0;
-    if (idx === 0 && _boundaryWord > 0) {
+    _spokenIndex = e.charIndex || 0;
+    let idx = _spokenIndex + _highlightOffset;
+    if (_spokenIndex === 0 && _boundaryWord > 0) {
       const words = _highlightEl.querySelectorAll('.speech-word');
       const w = words[_boundaryWord];
       if (w) idx = Number(w.dataset.start);
     }
+    _highlightWordIndex = _boundaryWord;
     _boundaryWord += 1;
     highlightChar(_highlightEl, idx);
   };
 
   u.onend = u.onerror = () => {
     if (_current !== u) return;
+    if (_paused) return;
     _current = null;
+    _paused = false;
     if (button) { button.classList.remove('is-speaking'); button.setAttribute('aria-pressed', 'false'); }
     if (_activeBtn === button) _activeBtn = null;
     clearHighlight();
+    syncDock();
   };
 
   _current = u;
+  _paused = false;
   _activeBtn = button;
   if (button) { button.classList.add('is-speaking'); button.setAttribute('aria-pressed', 'true'); }
-  if (_highlightEl) startFallbackHighlight(_highlightEl, u.rate);
+  if (_highlightEl) {
+    const from = charOffset > 0 ? wordIndexForChar(_highlightEl, charOffset) : 0;
+    startFallbackHighlight(_highlightEl, u.rate, from);
+  }
+  syncDock();
   // cancel() then speak() in the same turn is dropped by Chromium
-  const start = () => { if (_current === u) window.speechSynthesis.speak(u); };
+  const start = () => {
+    if (_current !== u) return;
+    window.speechSynthesis.speak(u);
+    if (_paused) window.speechSynthesis.pause();
+  };
   if (window.speechSynthesis.speaking || window.speechSynthesis.pending) setTimeout(start, 80);
   else setTimeout(start, 0);
 }
@@ -199,6 +319,7 @@ export function bindPronounceButtons(root = document) {
 
 export function initPronounce() {
   if (!supported) return;
+  ensureDock();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') stopSpeaking();
   });
