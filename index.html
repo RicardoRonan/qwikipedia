@@ -2,14 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Qwikipedia - a personalized Wikipedia feed that learns what you like." />
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-  <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)" />
-  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#09090b" />
+  <meta name="color-scheme" content="dark" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <script>
+    (function () {
+      var theme = 'system';
+      try {
+        var prefs = JSON.parse(localStorage.getItem('sw_prefs') || '{}');
+        if (prefs && prefs.theme) theme = prefs.theme;
+      } catch (e) {}
+      var dark = theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      var resolved = dark ? 'dark' : 'light';
+      document.documentElement.dataset.theme = resolved;
+      var themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) themeMeta.setAttribute('content', dark ? '#09090b' : '#ffffff');
+      var schemeMeta = document.querySelector('meta[name="color-scheme"]');
+      if (schemeMeta) schemeMeta.setAttribute('content', resolved);
+      var apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+      if (apple) apple.setAttribute('content', dark ? 'black-translucent' : 'default');
+    })();
+  </script>
+  <link rel="manifest" href="manifest.webmanifest" />
   <meta name="apple-mobile-web-app-title" content="Qwikipedia" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png" />
   <title>Qwikipedia</title>

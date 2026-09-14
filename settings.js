@@ -32,14 +32,33 @@ const INTEREST_OPTIONS = [
 
 // ===== Theme =====
 
+const THEME_CHROME = {
+  light: '#ffffff',
+  dark: '#09090b',
+};
+
+function syncBrowserChrome(resolved) {
+  const color = THEME_CHROME[resolved] || THEME_CHROME.light;
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) {
+    themeMeta.removeAttribute('media');
+    themeMeta.setAttribute('content', color);
+  }
+  const schemeMeta = document.querySelector('meta[name="color-scheme"]');
+  if (schemeMeta) schemeMeta.setAttribute('content', resolved);
+  const apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+  if (apple) {
+    apple.setAttribute('content', resolved === 'dark' ? 'black-translucent' : 'default');
+  }
+}
+
 export function applyTheme(theme) {
   const root = document.documentElement;
-  if (theme === 'system') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = prefersDark ? 'dark' : 'light';
-  } else {
-    root.dataset.theme = theme;
-  }
+  const resolved = theme === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : theme;
+  root.dataset.theme = resolved;
+  syncBrowserChrome(resolved);
   Storage.setPrefs({ theme });
   updateThemeButtons(theme);
 }
